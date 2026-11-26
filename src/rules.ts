@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import type { KitInputs } from "./generated/kit-inputs";
+import type { SBKitInputs } from "./generated/sbkit-inputs";
 import { ruleActionSchemas, ruleMatchSchema } from "./input-schema";
 import { fieldsFrom, preserveIdentity, record, resourceData, snapshot } from "./resource";
 import type { Resolve } from "./resource";
@@ -9,8 +9,8 @@ import { expandInput, previewReference } from "./settings";
 import type { Fields, ReadonlyJson, StrictUnion } from "./type-utils";
 
 export type Scope = "route" | "dns";
-type RouteMatch = ReadonlyJson<KitInputs["matches"]["route"]>;
-type DnsMatch = ReadonlyJson<KitInputs["matches"]["dns"]>;
+type RouteMatch = ReadonlyJson<SBKitInputs["matches"]["route"]>;
+type DnsMatch = ReadonlyJson<SBKitInputs["matches"]["dns"]>;
 
 const responseMatches = [
   "response_rcode",
@@ -147,8 +147,8 @@ function match<const M extends MatchFields>(
 
 export const Rule = Object.freeze({ match });
 
-export type RouteRuleAction = StrictUnion<ReadonlyJson<KitInputs["actions"]["route"]>>;
-export type DnsRuleAction = StrictUnion<ReadonlyJson<KitInputs["actions"]["dns"]>>;
+export type RouteRuleAction = StrictUnion<ReadonlyJson<SBKitInputs["actions"]["route"]>>;
+export type DnsRuleAction = StrictUnion<ReadonlyJson<SBKitInputs["actions"]["dns"]>>;
 export type RuleAction<S extends Scope> = { route: RouteRuleAction; dns: DnsRuleAction }[S];
 
 function actionsFor(scope: Scope) {

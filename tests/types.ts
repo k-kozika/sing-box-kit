@@ -73,7 +73,7 @@ mixed.tls(clientTls);
 vless.tls(serverTls);
 // @ts-expect-error Certificate and key paths must be supplied together.
 service.api().tls({ side: "server", certificate_path: "cert.pem" });
-// @ts-expect-error A raw tag cannot stand in for a Kit reference.
+// @ts-expect-error A raw tag cannot stand in for an SBKit reference.
 vless.dial({ detour: "out" });
 // @ts-expect-error HTTP client registration requires a tagged value.
 compile({ http_clients: [httpClient()] });

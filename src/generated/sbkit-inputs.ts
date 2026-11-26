@@ -508,7 +508,7 @@ export type DnsActionInput =
       extra?: string | string[];
     };
 
-export interface KitInputs {
+export interface SBKitInputs {
   factories: {
     inbounds: {
       anytls: {

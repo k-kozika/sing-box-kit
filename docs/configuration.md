@@ -24,7 +24,7 @@ Builder methods return new values. Register and reference the same final value a
 
 `compile(input)` preserves list order, checks tag collisions and reference capabilities, and returns a `SingBoxConfig` suitable for `JSON.stringify()`. Outbounds and endpoints share a tag scope. Services without explicit tags use their zero-based list position for collision checks.
 
-Use `validateConfig(value)` to check an existing JSON configuration against the pinned schema. This accepts raw tag strings and checks schema constraints. Use `compile()` for the Kit's registration, reference, and dependency checks.
+Use `validateConfig(value)` to check an existing JSON configuration against the pinned schema. This accepts raw tag strings and checks schema constraints. Use `compile()` for SBKit's registration, reference, and dependency checks.
 
 ## Shared settings
 
@@ -59,7 +59,7 @@ Use `.tls(options)` for the kind's TLS fields, such as `outbound.http({ tag: "pr
 
 Standard inbound and outbound TLS builders also accept side-tagged profiles. Use `side: "server"` with a `certificate_path` and `key_path` pair or a registered `certificate_provider`. Use `side: "client"` with optional `server_name` and `certificate_path` settings.
 
-VLESS also supports REALITY on both sides. On the inbound, set `server_name` and pass `reality: { private_key, short_id, handshake }`. The handshake has its own `server`, `server_port`, and optional Dial Fields. On the outbound, set the VLESS `server` and `server_port` for the connection, set the TLS `server_name` for verification, and pass `reality: { public_key, short_id }`. The Kit enables uTLS for that client profile.
+VLESS also supports REALITY on both sides. On the inbound, set `server_name` and pass `reality: { private_key, short_id, handshake }`. The handshake has its own `server`, `server_port`, and optional Dial Fields. On the outbound, set the VLESS `server` and `server_port` for the connection, set the TLS `server_name` for verification, and pass `reality: { public_key, short_id }`. SBKit enables uTLS for that client profile.
 
 REALITY keys are unpadded Base64url strings for 32-byte keys. Short IDs are even-length hexadecimal strings of up to 16 characters, including the empty string. The inbound accepts a string or an array of strings. Keep the private key in the server configuration and share the public key and a selected short ID with the client.
 
@@ -67,13 +67,13 @@ VLESS builders take `transport` and `multiplex` in the factory options.
 
 ## Typed references
 
-Pass the final registered resource wherever the Kit expects a reference. This includes references inside objects, maps, and arrays. OpenConnect DNS takes an `endpoint.openconnect()` value, OpenVPN DNS takes an `endpoint.openvpnClient()` value, and Resolved DNS takes a tagged `service.resolved()` value. DERP accepts a Tailscale endpoint or an array of those endpoints in `verify_client_endpoint`.
+Pass the final registered resource wherever SBKit expects a reference. This includes references inside objects, maps, and arrays. OpenConnect DNS takes an `endpoint.openconnect()` value, OpenVPN DNS takes an `endpoint.openvpnClient()` value, and Resolved DNS takes a tagged `service.resolved()` value. DERP accepts a Tailscale endpoint or an array of those endpoints in `verify_client_endpoint`.
 
 ## HTTP clients and services
 
 The API service defaults to loopback `127.0.0.1`. Omitting TLS uses plaintext TCP, and an omitted or empty `secret` allows unauthenticated connections. `dashboard` accepts a boolean, path string, or settings object. Set `enabled: true` to enable the dashboard in object form.
 
-The dashboard and remote rule-sets accept either a tagged client registered in `http_clients`, an untagged `httpClient()` builder, or an inline HTTP settings object. The inline object supports the sing-box HTTP client shape without `tag`, with Kit references for `detour`, `domain_resolver`, and typed `netns`. The dashboard uses its own default settings when its client is omitted. Set `route.default_http_client` to a registered client or let sing-box use the first registered client as its default.
+The dashboard and remote rule-sets accept either a tagged client registered in `http_clients`, an untagged `httpClient()` builder, or an inline HTTP settings object. The inline object supports the sing-box HTTP client shape without `tag`, with SBKit references for `detour`, `domain_resolver`, and typed `netns`. The dashboard uses its own default settings when its client is omitted. Set `route.default_http_client` to a registered client or let sing-box use the first registered client as its default.
 
 The SSM API service accepts a non-empty `servers` map from HTTP paths starting with `/` to registered Shadowsocks inbounds. Use static multi-user Shadowsocks with a non-empty `users` list or managed Shadowsocks with `managed: true`. The `none` method is available for single-user Shadowsocks. Managed mode requires an omitted or empty static user list.
 

@@ -1,4 +1,4 @@
-import type { KitInputs } from "./generated/kit-inputs";
+import type { SBKitInputs } from "./generated/sbkit-inputs";
 import type { ShadowsocksUser, User as RawUser, VLESSUser } from "./generated/sing-box";
 import { factoryCatalog, factoryName } from "./input-schema";
 import type { FactoryBranch } from "./input-schema";
@@ -88,7 +88,7 @@ const authOptions = {
   vless: { name: "name", credentials: ["uuid", "flow"], required: ["uuid"] },
 } as const satisfies Record<string, AuthOptions>;
 
-type Catalog = KitInputs["factories"];
+type Catalog = SBKitInputs["factories"];
 type Kind<T extends Target> = keyof Catalog[T] & string;
 type Groups<T extends Target, K extends Kind<T>> = ReadonlyJson<Catalog[T][K]>;
 type Options<T extends Target, K extends Kind<T>> =

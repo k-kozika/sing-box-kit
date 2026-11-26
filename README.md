@@ -1,4 +1,4 @@
-# sing-box Kit
+# sing-box-kit
 
 Build and validate sing-box v1.14.4 configurations in TypeScript.
 

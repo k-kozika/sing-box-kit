@@ -151,7 +151,7 @@ function copy(value: unknown, path: string, immutable: boolean, ancestors: Set<o
   if (value === null || typeof value !== "object") return value;
   if (identities.has(value)) {
     if (immutable) return value;
-    fail(path, "unexpected Kit value in JSON fields");
+    fail(path, "unexpected SBKit value in JSON fields");
   }
   if (ancestors.has(value)) fail(path, "cyclic configuration object");
   ancestors.add(value);

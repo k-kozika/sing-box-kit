@@ -43,7 +43,7 @@ function dereference(node: SchemaEntry): SchemaEntry {
   return node.$ref ? definitions[node.$ref.split("/").at(-1)!]! : node;
 }
 
-// Traverse the snapshot from its registration paths independently of the Kit generator.
+// Traverse the snapshot from its registration paths independently of the SBKit generator.
 function schemaLeaves(node: SchemaEntry): SchemaEntry[] {
   const resolved = dereference(node);
   const branches = [...(resolved.oneOf ?? []), ...(resolved.anyOf ?? [])];

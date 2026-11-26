@@ -1,6 +1,6 @@
 # Schema and type generation
 
-The [pinned schema](sing-box.json) is the verbatim output of `sing-box schema`. The Kit uses it for both Ajv validation and TypeScript generation.
+The [pinned schema](sing-box.json) is the verbatim output of `sing-box schema`. SBKit uses it for both Ajv validation and TypeScript generation.
 
 [`version.json`](version.json) records the output of `sing-box version --name` and the `Revision` reported by `sing-box version` for the same binary.
 
@@ -16,4 +16,4 @@ vp check
 bun test
 ```
 
-Type generation reads the local snapshot and works offline after dependency installation. CI checks both generated type files and independently compares the public factory names and branches to the pinned schema. The Kit input types use the same schema projections as the runtime builders. Run `bun tests/sing-box-check.ts` with the pinned binary on `PATH`, or set `SING_BOX` to its path, to check the representative configurations. When updating the supported sing-box version, update the schema snapshot, `version.json`, generated types, and affected test expectations together.
+Type generation reads the local snapshot and works offline after dependency installation. CI checks both generated type files and independently compares the public factory names and branches to the pinned schema. SBKit's input types use the same schema projections as the runtime builders. Run `bun tests/sing-box-check.ts` with the pinned binary on `PATH`, or set `SING_BOX` to its path, to check the representative configurations. When updating the supported sing-box version, update the schema snapshot, `version.json`, generated types, and affected test expectations together.

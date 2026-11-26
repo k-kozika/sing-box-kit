@@ -1,10 +1,10 @@
 import type {
-  DomainResolver as KitDomainResolver,
+  DomainResolver as SBKitDomainResolver,
   HTTPClientReference,
   InboundTLSOptions,
-  KitInputs,
   OutboundTLSOptions,
-} from "./generated/kit-inputs";
+  SBKitInputs,
+} from "./generated/sbkit-inputs";
 import { inputProperty, schemaShape, tagReference } from "./input-schema";
 import { copyJson, fieldsFrom, record, resourceData } from "./resource";
 import type { CertificateProvider, HttpClientValue, Resolve } from "./resource";
@@ -20,10 +20,10 @@ import {
 import type { SchemaNode } from "./schema";
 import type { Fields, ReadonlyJson } from "./type-utils";
 
-export type DomainResolver = ReadonlyJson<KitDomainResolver>;
-export type DirectDial = ReadonlyJson<KitInputs["factories"]["outbounds"]["direct"]["dial"]>;
-export type Dial = ReadonlyJson<KitInputs["factories"]["outbounds"]["vless"]["dial"]>;
-export type InboundListener = ReadonlyJson<KitInputs["factories"]["inbounds"]["mixed"]["listen"]>;
+export type DomainResolver = ReadonlyJson<SBKitDomainResolver>;
+export type DirectDial = ReadonlyJson<SBKitInputs["factories"]["outbounds"]["direct"]["dial"]>;
+export type Dial = ReadonlyJson<SBKitInputs["factories"]["outbounds"]["vless"]["dial"]>;
+export type InboundListener = ReadonlyJson<SBKitInputs["factories"]["inbounds"]["mixed"]["listen"]>;
 export type Listener = Omit<InboundListener, "detour">;
 
 export type ServerTls = { side: "server"; reality?: never } & (

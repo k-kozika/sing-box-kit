@@ -176,7 +176,7 @@ const listenKeys = new Set([
   "detour",
 ]);
 
-// Kit requirements supplement the schema's structural requirements.
+// SBKit requirements supplement the schema's structural requirements.
 const requiredOptions: Partial<Record<Target, Record<string, readonly string[]>>> = {
   inbounds: { shadowsocks: ["method"], vless: ["users"] },
   outbounds: {

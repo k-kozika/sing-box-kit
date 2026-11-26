@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import type { KitInputs } from "./generated/kit-inputs";
+import type { SBKitInputs } from "./generated/sbkit-inputs";
 import { rootSettings, sectionSettings } from "./input-schema";
 import type { SingBoxConfig } from "./generated/sing-box";
 import { copyJson, fieldsFrom, resourceData } from "./resource";
@@ -17,7 +17,7 @@ import { fail, validateConfig } from "./schema";
 import { expandInput, isEmptyDirect } from "./settings";
 import type { Fields, ReadonlyJson } from "./type-utils";
 
-export interface CompileInput extends Partial<ReadonlyJson<KitInputs["root"]>> {
+export interface CompileInput extends Partial<ReadonlyJson<SBKitInputs["root"]>> {
   readonly inbounds?: readonly Resource<"inbounds">[];
   readonly outbounds?: readonly Resource<"outbounds">[];
   readonly endpoints?: readonly Resource<"endpoints">[];
@@ -28,11 +28,11 @@ export interface CompileInput extends Partial<ReadonlyJson<KitInputs["root"]>> {
   readonly route?: {
     readonly rules?: readonly RuleValue<"route">[];
     readonly rule_set?: readonly Resource<"route.rule_set">[];
-  } & ReadonlyJson<KitInputs["sections"]["route"]>;
+  } & ReadonlyJson<SBKitInputs["sections"]["route"]>;
   readonly dns?: {
     readonly rules?: readonly RuleValue<"dns">[];
     readonly servers?: readonly DnsServer[];
-  } & ReadonlyJson<KitInputs["sections"]["dns"]>;
+  } & ReadonlyJson<SBKitInputs["sections"]["dns"]>;
 }
 
 type TopLevelTarget = Exclude<Target, "dns.servers" | "route.rule_set">;
