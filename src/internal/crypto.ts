@@ -1,3 +1,9 @@
+import { concatToUint8Array, toArrayBuffer } from "@peculiar/utils/bytes";
+import { hex } from "@peculiar/utils/encoding";
+
+// RFC 8410 PKCS#8 header for a 32-byte X25519 private key.
+const x25519Pkcs8Header = hex.decode("302e020100300506032b656e04220420");
+
 export function randomBytes(length: number): Uint8Array<ArrayBuffer> {
   if (!Number.isSafeInteger(length) || length < 0) {
     throw new RangeError("Random byte length must be a non-negative integer");
@@ -17,13 +23,7 @@ export async function deriveX25519PublicKey(
   if (privateKey.length !== 32) throw new RangeError("X25519 private key must be 32 bytes");
 
   const { subtle } = globalThis.crypto;
-  // RFC 8410 PKCS#8 header for a 32-byte X25519 private key.
-  const header = [
-    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
-  ];
-  const pkcs8 = new Uint8Array(header.length + privateKey.length);
-  pkcs8.set(header);
-  pkcs8.set(privateKey, header.length);
+  const pkcs8 = toArrayBuffer(concatToUint8Array([x25519Pkcs8Header, privateKey]));
   const key = await subtle.importKey("pkcs8", pkcs8, "X25519", false, ["deriveBits"]);
 
   // X25519 with the standard base point yields the corresponding public key.

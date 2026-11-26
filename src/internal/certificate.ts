@@ -1,16 +1,15 @@
-import { domainToASCII } from "node:url";
-import { isIP } from "../ip";
-import { randomBytes } from "./crypto";
+import "reflect-metadata";
+import { pem } from "@peculiar/utils/pem";
 import {
   BasicConstraintsExtension,
   ExtendedKeyUsage,
   ExtendedKeyUsageExtension,
   KeyUsageFlags,
   KeyUsagesExtension,
-  encodePem,
   SubjectAlternativeNameExtension,
   X509CertificateGenerator,
-} from "./x509";
+} from "@peculiar/x509";
+import { isIP } from "../ip";
 
 export async function serverCertificate(serverName: string, months: number) {
   if (!Number.isSafeInteger(months) || months < 1) {
@@ -28,7 +27,8 @@ export async function serverCertificate(serverName: string, months: number) {
     throw new TypeError("TLS server name must be a DNS name or IP address");
   }
   const version = isIP(serverName);
-  const dnsName = version ? "" : domainToASCII(serverName);
+  const dnsName =
+    version || serverName.includes(":") ? undefined : URL.parse(`http://${serverName}/`)?.hostname;
   if (!version && (!dnsName || !/^(?:\*\.)?[a-z\d_-]+(?:\.[a-z\d_-]+)*\.?$/i.test(dnsName))) {
     throw new TypeError("TLS server name must be a DNS name or IP address");
   }
@@ -41,9 +41,6 @@ export async function serverCertificate(serverName: string, months: number) {
     hash: "SHA-256",
   };
   const keys = await crypto.subtle.generateKey(algorithm, true, ["sign", "verify"]);
-  const serial = randomBytes(16);
-  serial[0] = serial[0]! & 0x7f;
-  if (serial.every((byte) => byte === 0)) serial[15] = 1;
 
   const name = dnsName || serverName;
   // Normalize IPv4-mapped IPv6 to hexadecimal groups for the SAN encoder.
@@ -51,7 +48,6 @@ export async function serverCertificate(serverName: string, months: number) {
   const certificate = await X509CertificateGenerator.createSelfSigned(
     {
       name: [{ CN: [name] }],
-      serialNumber: Buffer.from(serial).toString("hex"),
       notBefore: new Date(now.getTime() - 3_600_000),
       notAfter: expires,
       signingAlgorithm: algorithm,
@@ -70,7 +66,7 @@ export async function serverCertificate(serverName: string, months: number) {
   );
 
   return {
-    privateKey: encodePem(await crypto.subtle.exportKey("pkcs8", keys.privateKey), "PRIVATE KEY"),
-    certificate: encodePem(certificate.rawData, "CERTIFICATE"),
+    privateKey: pem.encode("PRIVATE KEY", await crypto.subtle.exportKey("pkcs8", keys.privateKey)),
+    certificate: pem.encode("CERTIFICATE", certificate.rawData),
   };
 }

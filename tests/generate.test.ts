@@ -93,7 +93,7 @@ test("generates matching ECH config and key PEM blocks", async () => {
   ).toBe(true);
   expect(keys.subarray(34)).toEqual(configs);
   expect(configs.subarray(59, -2).toString()).toBe("public.example");
-  await rejects(generate.echKeyPair("a".repeat(256)), RangeError);
+  await rejects(generate.echKeyPair("é".repeat(128)), RangeError);
 });
 
 test("generates a self-signed TLS certificate with a matching private key and SAN", async () => {
@@ -117,6 +117,17 @@ test.each(["192.0.2.1", "2001:db8::1", "::ffff:192.0.2.1"])(
   },
 );
 
-test("rejects a scoped IPv6 address for a TLS certificate", async () => {
-  await rejects(generate.tlsKeyPair("fe80::1%eth0"), TypeError);
+test("normalizes an internationalized wildcard DNS name in the TLS SAN", async () => {
+  const { certificate } = await generate.tlsKeyPair("*.BÜCHER.example");
+  const parsed = new X509Certificate(certificate);
+  expect(parsed.checkHost("www.xn--bcher-kva.example", { subject: "never" })).toBe(
+    "*.xn--bcher-kva.example",
+  );
 });
+
+test.each(["fe80::1%eth0", "example.com:80", "example.com:", "https://example.com"])(
+  "rejects %s as a TLS certificate name",
+  async (name) => {
+    await rejects(generate.tlsKeyPair(name), TypeError);
+  },
+);
