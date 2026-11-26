@@ -185,13 +185,23 @@ export function listenFields(
 
 export type TlsMode = "server" | "client" | "server-reality" | "client-reality";
 
+export type ProtocolTlsOptions<K, T> = T &
+  (K extends "naive" ? { readonly alpn?: never } : unknown);
+
+export function checkTlsAlpn(kind: string, options: Fields, path: string): void {
+  if (kind === "naive" && options.alpn !== undefined)
+    fail(`${path}.alpn`, "ALPN cannot be configured for Naive");
+}
+
 export function tlsFields(
   input: unknown,
   path: string,
   schema: SchemaNode,
-  mode?: TlsMode,
+  mode: TlsMode | undefined,
+  kind: string,
 ): Fields {
   const profile = record(input, path);
+  checkTlsAlpn(kind, profile, path);
   const enabled = Object.hasOwn(schemaShape(schema).properties ?? {}, "enabled");
   if (!Object.hasOwn(profile, "side")) {
     return {

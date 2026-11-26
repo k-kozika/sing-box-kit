@@ -23,7 +23,14 @@ import {
   previewReference,
   tlsFields,
 } from "./settings";
-import type { ClientTls, RealityClientTls, RealityServerTls, ServerTls, TlsMode } from "./settings";
+import type {
+  ClientTls,
+  ProtocolTlsOptions,
+  RealityClientTls,
+  RealityServerTls,
+  ServerTls,
+  TlsMode,
+} from "./settings";
 import type { CamelCase, Fields, ReadonlyJson, StrictUnion } from "./type-utils";
 import { isUser, requireUserCredentials } from "./user";
 import type { User } from "./user";
@@ -84,8 +91,11 @@ type ShadowsocksEntry = User | (Readonly<ShadowsocksUser> & { user?: never });
 type Catalog = SBKitInputs["factories"];
 type Kind<T extends Target> = keyof Catalog[T] & string;
 type Groups<T extends Target, K extends Kind<T>> = ReadonlyJson<Catalog[T][K]>;
+type StrictTransport<O> = O extends { readonly transport?: infer V }
+  ? O & { readonly transport?: StrictUnion<NonNullable<V>> }
+  : O;
 type Options<T extends Target, K extends Kind<T>> =
-  Groups<T, K> extends { options: infer O } ? StrictUnion<O> : never;
+  Groups<T, K> extends { options: infer O } ? StrictUnion<StrictTransport<O>> : never;
 type Tag = string | readonly string[] | undefined;
 type ExtraRoles<T extends Target, K> = T extends "endpoints"
   ? | (K extends keyof typeof endpointRoles ? (typeof endpointRoles)[K] : never)
@@ -116,7 +126,9 @@ type Built<
 > = Resource<T, K, V, (typeof targetRoles)[T][number] | ExtraRoles<T, K>> &
   (G extends { listen: infer L } ? ListenMethod<L> : unknown) &
   (G extends { dial: infer D } ? DialMethod<D> : unknown) &
-  (G extends { tls: infer F } ? TlsMethod<(F & { side?: never }) | Profile<T, K, F>> : unknown) &
+  (G extends { tls: infer F }
+    ? TlsMethod<ProtocolTlsOptions<K, (F & { side?: never }) | Profile<T, K, F>>>
+    : unknown) &
   (T extends "inbounds" ? (K extends keyof typeof authOptions ? AuthMethod : unknown) : unknown);
 
 type Factory<T extends Target, K extends Kind<T>> = T extends "services" | "http_clients"
@@ -340,7 +352,7 @@ function makeFactory(target: Target, kind: string, branches: FactoryBranch[]) {
         if (name === "InboundTLSOptions") mode = kind === "vless" ? "server-reality" : "server";
         if (name === "OutboundTLSOptions") mode = kind === "vless" ? "client-reality" : "client";
         methods.tls = (input: unknown) =>
-          apply("tls", () => tlsFields(input, `${path}.tls`, tls, mode));
+          apply("tls", () => tlsFields(input, `${path}.tls`, tls, mode, kind));
       }
       if (auth) {
         methods.authUser = (user: User) => {

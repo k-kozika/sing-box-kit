@@ -29,6 +29,8 @@ Use `.tls(options)` for the kind's TLS fields, such as `outbound.http({ tag: "pr
 
 Standard inbound and outbound TLS builders also accept side-tagged profiles. Use `side: "server"` with a `certificate_path` and `key_path` pair or a registered `certificate_provider`. Use `side: "client"` with optional `server_name` and `certificate_path` settings.
 
+Naive builders and proxy profiles negotiate ALPN automatically. Omit `alpn` from their TLS settings.
+
 ### VLESS with REALITY
 
 On the inbound, set `server_name` and pass `reality: { private_key, short_id, handshake }`. The handshake has its own `server`, `server_port`, and optional Dial Fields. On the outbound, set the VLESS `server` and `server_port` for the connection, set the TLS `server_name` for verification, and pass `reality: { public_key, short_id }`. SBKit enables uTLS for that client profile.

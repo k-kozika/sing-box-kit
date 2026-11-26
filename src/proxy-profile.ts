@@ -11,7 +11,8 @@ import type {
 import { fieldsFrom, record, snapshot } from "./resource";
 import type { Resource, SsmInbound } from "./resource";
 import { fail, keyPath } from "./schema";
-import type { Dial } from "./settings";
+import { checkTlsAlpn } from "./settings";
+import type { Dial, ProtocolTlsOptions } from "./settings";
 import type { Fields, ReadonlyJson, StrictUnion } from "./type-utils";
 import { isUser, requireUserCredentials } from "./user";
 import type { User, UserCredentials } from "./user";
@@ -45,13 +46,7 @@ type Transport = StrictUnion<
     >
   | ReadonlyJson<Pick<Extract<V2RayTransport, { type: "grpc" }>, "type" | "service_name">>
   | ReadonlyJson<Pick<Extract<V2RayTransport, { type: "httpupgrade" }>, "type" | "host" | "path">>
->;
-type LocalTransport = ReadonlyJson<
-  Pick<Extract<V2RayTransport, { type: "http" }>, "headers" | "idle_timeout" | "ping_timeout">
->;
-type ClientTransport = LocalTransport &
-  ReadonlyJson<Pick<Extract<V2RayTransport, { type: "grpc" }>, "permit_without_stream">>;
-
+> & { readonly [Key in AllTransportSideFields]?: never };
 type NormalTls = {
   readonly mode: "tls";
   readonly serverName?: string;
@@ -120,6 +115,12 @@ type SharedOption<K extends Protocol> = K extends keyof typeof sharedOption
 type SideOptions<O, Keys extends PropertyKey> = O extends unknown
   ? Omit<O, Keys> & { readonly [K in Extract<Keys, keyof O | "version" | "transport">]?: never }
   : never;
+type ProfileOutboundOptions<K extends Protocol, Input> = K extends "snell"
+  ? Extract<
+      StrictUnion<Options<"outbounds", "snell">>,
+      { version: [Input] extends [{ readonly version: 5 }] ? 4 : 6 }
+    >
+  : Options<"outbounds", K>;
 
 type Realm = ReadonlyJson<
   Required<Pick<Hysteria2InboundRealm, "server_url" | "realm_id" | "stun_servers">>
@@ -129,7 +130,7 @@ type RealmLocal = ReadonlyJson<
   Omit<Hysteria2InboundRealm, "server_url" | "realm_id" | "stun_servers">
 >;
 
-type ServerSettings<K extends Protocol> = {
+type ServerSettings<K extends Protocol, Input> = {
   readonly tag: string;
   readonly listen?: ReadonlyJson<Catalog["inbounds"][K]["listen"]> & {
     readonly address?: string;
@@ -140,30 +141,39 @@ type ServerSettings<K extends Protocol> = {
   >;
   readonly tls?: K extends TlsUnsupported | "shadowtls"
     ? never
-    : ReadonlyJson<Omit<InboundTLSOptions, "enabled" | "reality">>;
-  readonly transport?: K extends TransportProtocol ? LocalTransport : never;
+    : ProtocolTlsOptions<K, ReadonlyJson<Omit<InboundTLSOptions, "enabled" | "reality">>>;
+  readonly transport?: K extends TransportProtocol
+    ? TransportSideOptions<ProfileTransport<Input>, false>
+    : never;
   readonly realm?: K extends "hysteria2" ? RealmLocal : never;
 };
 type ClientTls = ReadonlyJson<Omit<OutboundTLSOptions, "enabled" | "server_name" | "reality">>;
-type ClientSettings<K extends Protocol> = {
+type ClientSettings<K extends Protocol, Input> = {
   readonly tag: string;
   readonly dial?: ReadonlyJson<Catalog["outbounds"][K]["dial"]>;
   readonly options?: SideOptions<
-    Options<"outbounds", K>,
+    ProfileOutboundOptions<K, Input>,
     (typeof ownedClient)[number] | SharedOption<K>
   >;
-  readonly tls?: K extends TlsUnsupported ? never : ClientTls;
-  readonly transport?: K extends TransportProtocol ? ClientTransport : never;
+  readonly tls?: K extends TlsUnsupported ? never : ProtocolTlsOptions<K, ClientTls>;
+  readonly transport?: K extends TransportProtocol
+    ? TransportSideOptions<ProfileTransport<Input>, true>
+    : never;
   readonly realm?: K extends "hysteria2" ? Omit<RealmLocal, "stun_domain_resolver"> : never;
   readonly shortId?: K extends "vless" ? string : never;
 };
-interface Profile<K extends Protocol, Authenticated extends boolean, ExtraInbound = unknown> {
-  server(this: void, options: ServerSettings<K>): Inbound<K> & ExtraInbound;
+interface Profile<
+  K extends Protocol,
+  Authenticated extends boolean,
+  ExtraInbound = unknown,
+  Input = unknown,
+> {
+  server(this: void, options: ServerSettings<K, Input>): Inbound<K> & ExtraInbound;
   client(
     this: void,
     ...args: Authenticated extends true
-      ? [user: User, options: ClientSettings<K>]
-      : [options: ClientSettings<K>]
+      ? [user: User, options: ClientSettings<K, Input>]
+      : [options: ClientSettings<K, Input>]
   ): Outbound<K>;
 }
 
@@ -171,7 +181,10 @@ type TransportInput<K extends TransportProtocol> = Direct & {
   readonly users: Users;
 } & TransportTls<K>;
 type PlainInput = Direct & { readonly tls?: NormalTls | NoTls };
-type RequiredTlsInput = Direct & { readonly users: Users; readonly tls: NormalTls };
+type RequiredTlsInput<K extends Protocol = Protocol> = Direct & {
+  readonly users: Users;
+  readonly tls: ProtocolTlsOptions<K, NormalTls>;
+};
 type HysteriaInput = HysteriaDirect &
   Pick<RequiredTlsInput, "users" | "tls"> &
   Pick<Options<"inbounds", "hysteria">, "obfs">;
@@ -224,6 +237,29 @@ const localTransportFields = {
   grpc: ["idle_timeout", "ping_timeout"],
   httpupgrade: ["headers"],
 } as const;
+const grpcClientFields = ["permit_without_stream"] as const;
+type TransportKind = keyof typeof localTransportFields;
+type TransportSelection<K extends TransportKind> = { readonly transport: { readonly type: K } };
+type ProfileTransport<Input> = Input extends TransportSelection<infer K> ? K : "tcp";
+type TransportSideField<K extends TransportKind, Client extends boolean> =
+  | (typeof localTransportFields)[K][number]
+  | (Client extends true ? (K extends "grpc" ? (typeof grpcClientFields)[number] : never) : never);
+type AllTransportSideFields = TransportSideField<TransportKind, true>;
+// A setting must work for every possible transport when the input type is a union.
+type CommonTransportSideFields<
+  K extends TransportKind,
+  Client extends boolean,
+> = keyof (K extends TransportKind ? Record<TransportSideField<K, Client>, true> : never) &
+  AllTransportSideFields;
+type TransportSideOptions<
+  K extends TransportKind,
+  Client extends boolean,
+  Allowed extends AllTransportSideFields = CommonTransportSideFields<K, Client>,
+> = [Allowed] extends [never]
+  ? never
+  : ReadonlyJson<Pick<StrictUnion<V2RayTransport>, Allowed>> & {
+      readonly [Key in Exclude<AllTransportSideFields, Allowed>]?: never;
+    };
 
 const tlsRequired = new Set<Protocol>([
   "anytls",
@@ -311,6 +347,7 @@ function tlsFor(kind: Protocol, input: unknown, needsTls: boolean, path: string)
     if (kind === "shadowsocks" || kind === "snell" || kind === "socks" || kind === "shadowtls")
       fail(path, "TLS is unavailable for this profile");
     const fields = fieldsFrom(input, path, ["mode", "serverName", "alpn"]);
+    checkTlsAlpn(kind, fields, path);
     if (
       fields.serverName !== undefined &&
       (typeof fields.serverName !== "string" || !fields.serverName)
@@ -451,10 +488,12 @@ function protocolOptions(
   return { serverFields, clientFields };
 }
 
-function makeProfile<K extends Protocol, Authenticated extends boolean, ExtraInbound = unknown>(
-  kind: K,
-  input: unknown,
-): Profile<K, Authenticated, ExtraInbound> {
+function makeProfile<
+  K extends Protocol,
+  Authenticated extends boolean,
+  ExtraInbound = unknown,
+  Input = unknown,
+>(kind: K, input: unknown): Profile<K, Authenticated, ExtraInbound, Input> {
   const path = `proxyProfile.${kind}`;
   const sharedKey = Object.hasOwn(sharedOption, kind)
     ? sharedOption[kind as keyof typeof sharedOption]
@@ -556,7 +595,7 @@ function makeProfile<K extends Protocol, Authenticated extends boolean, ExtraInb
         fail(`${location}.transport`, "this transport has no side-specific fields");
       transportOptions = fieldsFrom(local.transport, `${location}.transport`, [
         ...localTransportFields[transportType],
-        ...(client && transportType === "grpc" ? ["permit_without_stream"] : []),
+        ...(client && transportType === "grpc" ? grpcClientFields : []),
       ]);
     }
     let realmOptions: Fields = {};
@@ -616,6 +655,7 @@ function makeProfile<K extends Protocol, Authenticated extends boolean, ExtraInb
         ],
         `${location}.tls`,
       );
+      checkTlsAlpn(kind, settings, `${location}.tls`);
       if (
         !client &&
         !settings.certificate_provider &&
@@ -682,7 +722,7 @@ function makeProfile<K extends Protocol, Authenticated extends boolean, ExtraInb
       return applyTls(builder, local, location, true);
     },
   };
-  return Object.freeze(profile) as unknown as Profile<K, Authenticated, ExtraInbound>;
+  return Object.freeze(profile) as unknown as Profile<K, Authenticated, ExtraInbound, Input>;
 }
 
 function requiredString(input: unknown, path: string): string {
@@ -702,8 +742,12 @@ function socks(input: SocksInput & { readonly users?: Users }) {
   return makeProfile<"socks", boolean>("socks", input);
 }
 
-function snell(input: SnellInput & { readonly users: Users }): Profile<"snell", true>;
-function snell(input: SnellInput & { readonly users?: never }): Profile<"snell", false>;
+function snell<const Version extends 5 | 6 = 6>(
+  input: SnellInput & { readonly version?: Version; readonly users: Users },
+): Profile<"snell", true, unknown, { readonly version: Version }>;
+function snell<const Version extends 5 | 6 = 6>(
+  input: SnellInput & { readonly version?: Version; readonly users?: never },
+): Profile<"snell", false, unknown, { readonly version: Version }>;
 function snell(input: SnellInput & { readonly users?: Users }) {
   return makeProfile<"snell", boolean>("snell", input);
 }
@@ -753,18 +797,29 @@ function shadowsocks(input: ShadowsocksInput) {
   return makeProfile<"shadowsocks", boolean>("shadowsocks", input);
 }
 
+function transportProfile<K extends TransportProtocol>(kind: K) {
+  function create<const Transport extends TransportKind>(
+    input: TransportInput<K> & TransportSelection<Transport>,
+  ): Profile<K, true, unknown, TransportSelection<Transport>>;
+  function create(input: TransportInput<K>): Profile<K, true>;
+  function create(input: TransportInput<K>) {
+    return makeProfile<K, true>(kind, input);
+  }
+  return create;
+}
+
 export const proxyProfile = Object.freeze({
   anytls: (input: RequiredTlsInput) => makeProfile<"anytls", true>("anytls", input),
   http,
   hysteria: (input: HysteriaInput) => makeProfile<"hysteria", true>("hysteria", input),
   hysteria2: (input: Hysteria2Input) => makeProfile<"hysteria2", true>("hysteria2", input),
-  naive: (input: RequiredTlsInput) => makeProfile<"naive", true>("naive", input),
+  naive: (input: RequiredTlsInput<"naive">) => makeProfile<"naive", true>("naive", input),
   shadowsocks,
   shadowtls,
   snell,
   socks,
-  trojan: (input: TransportInput<"trojan">) => makeProfile<"trojan", true>("trojan", input),
+  trojan: transportProfile("trojan"),
   tuic: (input: RequiredTlsInput) => makeProfile<"tuic", true>("tuic", input),
-  vless: (input: TransportInput<"vless">) => makeProfile<"vless", true>("vless", input),
-  vmess: (input: TransportInput<"vmess">) => makeProfile<"vmess", true>("vmess", input),
+  vless: transportProfile("vless"),
+  vmess: transportProfile("vmess"),
 });

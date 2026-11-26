@@ -389,3 +389,65 @@ proxyProfile.shadowtls({
 });
 // @ts-expect-error Snell profile v5 selects the compatible client v4 automatically.
 proxyProfile.snell({ connect: profileConnect, psk: "example-psk", version: 4 });
+
+const naiveAlice = user({ name: "alice", credentials: { naive: { password: "password" } } });
+const naiveInput = { connect: profileConnect, users: [naiveAlice], tls: { mode: "tls" } } as const;
+const naiveProfile = proxyProfile.naive(naiveInput);
+const explicitAlpn = { alpn: ["h2"] };
+// @ts-expect-error Naive inbound negotiates ALPN automatically.
+inbound.naive({ tag: "in" }).tls(explicitAlpn);
+// @ts-expect-error Naive outbound negotiates ALPN automatically.
+outbound.naive({ tag: "out" }).tls(explicitAlpn);
+// @ts-expect-error Naive profiles cannot set shared ALPN.
+proxyProfile.naive({ ...naiveInput, tls: { mode: "tls", ...explicitAlpn } });
+// @ts-expect-error Naive profiles cannot set server ALPN.
+naiveProfile.server({ tag: "in", tls: explicitAlpn });
+// @ts-expect-error Naive profiles cannot set client ALPN.
+naiveProfile.client(naiveAlice, { tag: "out", tls: explicitAlpn });
+
+const sideHeaders = { headers: { "x-proxy": "one" }, idle_timeout: "5s" };
+// @ts-expect-error gRPC server transport has no headers.
+grpc.server({ tag: "in", transport: sideHeaders });
+// @ts-expect-error gRPC client transport has no headers.
+grpc.client(profileAlice, { tag: "out", transport: sideHeaders });
+grpc.client(profileAlice, { tag: "out", transport: { permit_without_stream: true } });
+grpc.server({ tag: "in", transport: { idle_timeout: "5s" } });
+// @ts-expect-error permit_without_stream is client-only.
+grpc.server({ tag: "in", transport: { idle_timeout: "5s", permit_without_stream: true } });
+
+const ws = proxyProfile.vmess({
+  connect: profileConnect,
+  users: [profileAlice],
+  transport: { type: "ws" },
+});
+const wsHeaders = { headers: { "x-proxy": "one" } };
+ws.server({ tag: "in", transport: wsHeaders });
+ws.client(profileAlice, { tag: "out", transport: wsHeaders });
+// @ts-expect-error WebSocket has no idle_timeout in its transport settings.
+ws.client(profileAlice, { tag: "out", transport: sideHeaders });
+const sharedGrpc = { type: "grpc", service_name: "proxy", headers: { "x-proxy": "one" } } as const;
+// @ts-expect-error A shared gRPC transport cannot include headers.
+proxyProfile.vless({ connect: profileConnect, users: [profileAlice], transport: sharedGrpc });
+// @ts-expect-error Native gRPC transport cannot include headers.
+inbound.vless({ tag: "in", users: [profileAlice], transport: sharedGrpc });
+// @ts-expect-error Native gRPC transport cannot include headers.
+outbound.vmess({ tag: "out", transport: sharedGrpc });
+const httpOrGrpc = proxyProfile.vmess({
+  connect: profileConnect,
+  users: [profileAlice],
+  transport: { type: Math.random() > 0.5 ? "http" : "grpc" },
+});
+httpOrGrpc.client(profileAlice, { tag: "out", transport: { idle_timeout: "5s" } });
+// @ts-expect-error A side setting must be supported by all possible transports.
+httpOrGrpc.client(profileAlice, { tag: "out", transport: sideHeaders });
+
+const snellProfileOptions = { connect: profileConnect, psk: "example-psk" };
+const defaultSnell = proxyProfile.snell(snellProfileOptions);
+const v6Snell = proxyProfile.snell({ ...snellProfileOptions, users: [profileAlice], version: 6 });
+const legacySnell = proxyProfile.snell({ ...snellProfileOptions, version: 5, obfs_mode: "http" });
+const legacyObfs = { reuse: true, obfs_host: "cover.example" };
+legacySnell.client({ tag: "out", options: legacyObfs });
+// @ts-expect-error Default Snell v6 has no obfs_host.
+defaultSnell.client({ tag: "out", options: legacyObfs });
+// @ts-expect-error Explicit Snell v6 has no obfs_host.
+v6Snell.client(profileAlice, { tag: "out", options: legacyObfs });

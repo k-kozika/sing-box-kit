@@ -38,7 +38,7 @@ Supply a `tag` to each `.server()` and `.client()` call. Set listen fields in `.
 
 ## Transport and TLS
 
-VMess, VLESS, and Trojan default to TCP. Select `http`, `ws`, `grpc`, `httpupgrade`, or `quic` with `transport.type`. Set shared parameters such as the gRPC service name in the profile. Pass side-specific headers or timeouts under `transport` in `.server()` or `.client()`. Use `options` on those methods for other protocol-specific fields, such as VLESS packet encoding on the client.
+VMess, VLESS, and Trojan default to TCP. Select `http`, `ws`, `grpc`, `httpupgrade`, or `quic` with `transport.type`. Set shared parameters such as the gRPC service name in the profile. Set side-specific `transport.headers` for HTTP, WebSocket, and HTTPUpgrade, or transport timeouts for HTTP and gRPC. Use `options` on `.server()` and `.client()` for other protocol-specific fields, such as VLESS packet encoding on the client.
 
 For regular TLS, the client uses the public host as the verification name by default. Set `tls.serverName` when it differs. Set `tls.alpn` in the profile to send the same list to both ends. V2Ray QUIC requires regular TLS.
 
@@ -53,6 +53,8 @@ For VLESS REALITY, use `tls: { mode: "reality", serverName, handshake: { host, p
 | Snell     | `version: 5` builds a v5 inbound and a compatible v4 outbound. `version: 6` (default) uses v6 on both ends. Set the shared `psk` in the profile.      |
 
 Call `.client({ tag })` when the profile uses no authentication or a shared key with no per-user credential.
+
+With Snell `version: 5` and `obfs_mode: "http"`, set the v4 outbound's obfuscation host in the client call's `options.obfs_host`.
 
 ## Shadowsocks SSM and Hysteria2 Realm
 

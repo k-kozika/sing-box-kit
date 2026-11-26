@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPrivateKey, createPublicKey } from "node:crypto";
-import { compile, proxyProfile, route, service, user } from "../index";
+import { compile, inbound, outbound, proxyProfile, route, service, user } from "../index";
 
 const connect = { host: "edge.example", port: 443 };
 const server = { tag: "in", listen: { address: "127.0.0.1", port: 8443 } };
@@ -9,6 +9,35 @@ const uuid = "00000000-0000-4000-8000-000000000001";
 const secondUuid = "00000000-0000-4000-8000-000000000002";
 
 describe("proxy profiles", () => {
+  test("rejects explicit Naive ALPN in factories and profiles", () => {
+    const alice = user({ name: "alice", credentials: { naive: { password: "fixture" } } });
+    const settings = { connect, users: [alice], tls: { mode: "tls" } } as const;
+    const profile = proxyProfile.naive(settings);
+    const alpn = ["h2"];
+
+    expect(() => inbound.naive({ tag: "in" }).tls({ alpn } as never)).toThrow(
+      "inbounds.naive.tls.alpn",
+    );
+    expect(() => outbound.naive({ tag: "out" }).tls({ alpn: [] } as never)).toThrow(
+      "outbounds.naive.tls.alpn",
+    );
+    expect(() => proxyProfile.naive({ ...settings, tls: { mode: "tls", alpn } } as never)).toThrow(
+      "proxyProfile.naive.tls.alpn",
+    );
+    expect(() =>
+      profile.server({
+        ...server,
+        tls: { alpn, certificate_path: "cert.pem", key_path: "key.pem" },
+      } as never),
+    ).toThrow("proxyProfile.naive.server.tls.alpn");
+    expect(() => profile.client(alice, { ...client, tls: { alpn } } as never)).toThrow(
+      "proxyProfile.naive.client.tls.alpn",
+    );
+    expect(compile({ outbounds: [outbound.http({ tag: "http" }).tls({ alpn })] })).toMatchObject({
+      outbounds: [{ tls: { alpn } }],
+    });
+  });
+
   test("shares transport and TLS name, keeps side settings independent and emits one user's credentials", () => {
     const credentials = { vless: { uuid } };
     const alice = user({ name: "alice", credentials });
@@ -177,11 +206,20 @@ describe("proxy profiles", () => {
       obfs_mode: "http",
     });
     expect(
-      compile({ inbounds: [snell.server(server)], outbounds: [snell.client(client)] }),
+      compile({
+        inbounds: [snell.server(server)],
+        outbounds: [snell.client({ ...client, options: { obfs_host: "cover.example" } })],
+      }),
     ).toMatchObject({
       inbounds: [{ version: 5, obfs_mode: "http" }],
-      outbounds: [{ version: 4, obfs_mode: "http" }],
+      outbounds: [{ version: 4, obfs_mode: "http", obfs_host: "cover.example" }],
     });
+    const snellV6 = proxyProfile.snell({ connect, psk: "test-shared-key" });
+    expect(() =>
+      Reflect.apply(snellV6.client, undefined, [
+        { ...client, options: { obfs_host: "cover.example" } },
+      ]),
+    ).toThrow("obfs_host");
     expect(() =>
       Reflect.apply(proxyProfile.snell, undefined, [{ connect, psk: "secret", version: 4 }]),
     ).toThrow("version");
@@ -275,5 +313,12 @@ describe("proxy profiles", () => {
         { ...client, transport: { service_name: "other" } },
       ]),
     ).toThrow("service_name");
+    const headers = { headers: { "x-proxy": "one" } };
+    expect(() =>
+      Reflect.apply(profile.server, undefined, [{ ...server, transport: headers }]),
+    ).toThrow("transport.headers");
+    expect(() =>
+      Reflect.apply(profile.client, undefined, [alice, { ...client, transport: headers }]),
+    ).toThrow("transport.headers");
   });
 });
