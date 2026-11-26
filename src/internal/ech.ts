@@ -1,4 +1,4 @@
-import { pem } from "./crypto";
+import { encodePem } from "./x509";
 
 function uint16(value: number): Buffer {
   const bytes = Buffer.alloc(2);
@@ -6,7 +6,7 @@ function uint16(value: number): Buffer {
   return bytes;
 }
 
-function vector16(bytes: Uint8Array): Buffer {
+function vector16(bytes: Uint8Array): Buffer<ArrayBuffer> {
   return Buffer.concat([uint16(bytes.length), bytes]);
 }
 
@@ -22,7 +22,7 @@ export function encodeEchKeyPair(name: Buffer, privateKey: Uint8Array, publicKey
   ]);
   const config = Buffer.concat([uint16(0xfe0d), vector16(contents)]);
   return {
-    config: pem("ECH CONFIGS", vector16(config)),
-    key: pem("ECH KEYS", Buffer.concat([vector16(privateKey), vector16(config)])),
+    config: encodePem(vector16(config), "ECH CONFIGS"),
+    key: encodePem(Buffer.concat([vector16(privateKey), vector16(config)]), "ECH KEYS"),
   };
 }

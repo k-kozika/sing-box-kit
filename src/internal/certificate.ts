@@ -1,47 +1,16 @@
 import { domainToASCII } from "node:url";
 import { isIP } from "../ip";
-import { pem, randomBytes } from "./crypto";
-
-function der(tag: number, ...parts: Uint8Array[]): Buffer<ArrayBuffer> {
-  const body = Buffer.concat(parts);
-  if (body.length < 128) return Buffer.concat([Buffer.from([tag, body.length]), body]);
-
-  const size = Buffer.alloc(4);
-  size.writeUInt32BE(body.length);
-  const length = size.subarray(size.findIndex((byte) => byte !== 0));
-  return Buffer.concat([Buffer.from([tag, 0x80 | length.length]), length, body]);
-}
-
-function sequence(...parts: Uint8Array[]): Buffer<ArrayBuffer> {
-  return der(0x30, ...parts);
-}
-
-function time(date: Date): Buffer<ArrayBuffer> {
-  const year = date.getUTCFullYear();
-  const utc = year >= 1950 && year < 2050;
-  const value = date
-    .toISOString()
-    .slice(utc ? 2 : 0, 19)
-    .replace(/[-:T]/g, "");
-  return der(utc ? 0x17 : 0x18, Buffer.from(`${value}Z`));
-}
-
-function ipAddress(name: string, version: 4 | 6): Buffer<ArrayBuffer> {
-  if (version === 4) return Buffer.from(name.split(".").map(Number));
-
-  const canonical = new URL(`http://[${name}]`).hostname.slice(1, -1);
-  const [prefix, suffix] = canonical.split("::");
-  const leading = prefix ? prefix.split(":") : [];
-  const trailing = suffix ? suffix.split(":") : [];
-  const groups = [
-    ...leading,
-    ...Array<string>(8 - leading.length - trailing.length).fill("0"),
-    ...trailing,
-  ];
-  const bytes = Buffer.alloc(16);
-  groups.forEach((group, index) => bytes.writeUInt16BE(Number.parseInt(group, 16), index * 2));
-  return bytes;
-}
+import { randomBytes } from "./crypto";
+import {
+  BasicConstraintsExtension,
+  ExtendedKeyUsage,
+  ExtendedKeyUsageExtension,
+  KeyUsageFlags,
+  KeyUsagesExtension,
+  encodePem,
+  SubjectAlternativeNameExtension,
+  X509CertificateGenerator,
+} from "./x509";
 
 export async function serverCertificate(serverName: string, months: number) {
   if (!Number.isSafeInteger(months) || months < 1) {
@@ -64,61 +33,44 @@ export async function serverCertificate(serverName: string, months: number) {
     throw new TypeError("TLS server name must be a DNS name or IP address");
   }
 
-  const { subtle } = globalThis.crypto;
-  const { privateKey, publicKey } = await subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  );
-  const sha256WithRsa = Buffer.from("300d06092a864886f70d01010b0500", "hex");
-  const name = sequence(
-    der(
-      0x31,
-      sequence(Buffer.from("0603550403", "hex"), der(0x0c, Buffer.from(dnsName || serverName))),
-    ),
-  );
-  const subjectAltName = der(
-    version ? 0x87 : 0x82,
-    version ? ipAddress(serverName, version) : Buffer.from(dnsName),
-  );
-  const extensions = der(
-    0xa3,
-    sequence(
-      // Key usage (digitalSignature, keyEncipherment) and extended key usage (serverAuth).
-      Buffer.from("300e0603551d0f0101ff0404030205a0", "hex"),
-      Buffer.from("30130603551d25040c300a06082b06010505070301", "hex"),
-      Buffer.from("30090603551d1304023000", "hex"),
-      sequence(Buffer.from("0603551d11", "hex"), der(0x04, sequence(subjectAltName))),
-    ),
-  );
-
+  const crypto = globalThis.crypto;
+  const algorithm = {
+    name: "RSASSA-PKCS1-v1_5",
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256",
+  };
+  const keys = await crypto.subtle.generateKey(algorithm, true, ["sign", "verify"]);
   const serial = randomBytes(16);
   serial[0] = serial[0]! & 0x7f;
-  const first = serial.findIndex((byte) => byte !== 0);
-  const serialNumber = first === -1 ? Buffer.from([1]) : serial.subarray(first);
-  const positiveSerial =
-    serialNumber[0]! < 128 ? serialNumber : Buffer.concat([Buffer.from([0]), serialNumber]);
-  const signed = sequence(
-    der(0xa0, der(0x02, Buffer.from([2]))),
-    der(0x02, positiveSerial),
-    sha256WithRsa,
-    name,
-    sequence(time(new Date(now.getTime() - 3_600_000)), time(expires)),
-    name,
-    new Uint8Array(await subtle.exportKey("spki", publicKey)),
-    extensions,
+  if (serial.every((byte) => byte === 0)) serial[15] = 1;
+
+  const name = dnsName || serverName;
+  // Normalize IPv4-mapped IPv6 to hexadecimal groups for the SAN encoder.
+  const san = version === 6 ? new URL(`http://[${serverName}]`).hostname.slice(1, -1) : name;
+  const certificate = await X509CertificateGenerator.createSelfSigned(
+    {
+      name: [{ CN: [name] }],
+      serialNumber: Buffer.from(serial).toString("hex"),
+      notBefore: new Date(now.getTime() - 3_600_000),
+      notAfter: expires,
+      signingAlgorithm: algorithm,
+      keys,
+      extensions: [
+        new KeyUsagesExtension(
+          KeyUsageFlags.digitalSignature | KeyUsageFlags.keyEncipherment,
+          true,
+        ),
+        new ExtendedKeyUsageExtension([ExtendedKeyUsage.serverAuth]),
+        new BasicConstraintsExtension(false),
+        new SubjectAlternativeNameExtension([{ type: version ? "ip" : "dns", value: san }]),
+      ],
+    },
+    crypto,
   );
-  const signature = new Uint8Array(await subtle.sign("RSASSA-PKCS1-v1_5", privateKey, signed));
+
   return {
-    privateKey: pem("PRIVATE KEY", Buffer.from(await subtle.exportKey("pkcs8", privateKey))),
-    certificate: pem(
-      "CERTIFICATE",
-      sequence(signed, sha256WithRsa, der(0x03, Buffer.from([0]), signature)),
-    ),
+    privateKey: encodePem(await crypto.subtle.exportKey("pkcs8", keys.privateKey), "PRIVATE KEY"),
+    certificate: encodePem(certificate.rawData, "CERTIFICATE"),
   };
 }

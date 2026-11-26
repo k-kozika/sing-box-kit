@@ -33,8 +33,3 @@ export async function deriveX25519PublicKey(
   const publicKey = await subtle.importKey("raw", basePoint, "X25519", false, []);
   return new Uint8Array(await subtle.deriveBits({ name: "X25519", public: publicKey }, key, 256));
 }
-
-export function pem(label: string, data: Buffer): string {
-  const lines = data.toString("base64").match(/.{1,64}/g) ?? [];
-  return [`-----BEGIN ${label}-----`, ...lines, `-----END ${label}-----`, ""].join("\n");
-}
