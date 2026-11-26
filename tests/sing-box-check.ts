@@ -43,7 +43,7 @@ const configs = {
       inbound
         .vless({
           tag: "incoming",
-          users: [{ user: user({ name: "fixture" }), uuid }],
+          users: [user({ name: "fixture", credentials: { vless: { uuid } } })],
           transport,
           multiplex: { enabled: false },
         })

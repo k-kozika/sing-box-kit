@@ -37,4 +37,4 @@ export type {
   ServerTls,
 } from "./src/settings";
 export { user } from "./src/user";
-export type { User } from "./src/user";
+export type { User, UserCredentials } from "./src/user";

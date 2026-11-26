@@ -44,18 +44,20 @@ Route options include `override_address`, `override_port`, and the other fields 
 
 ## Match authenticated users
 
-A `User` represents a name shared across inbounds. Supply credentials on each inbound entry. SOCKS, Mixed, and Shadowsocks use `password`. VLESS uses `uuid` with optional `flow`. Mixed and Shadowsocks also accept their sing-box entry formats. In an entry that uses `user`, omit the explicit `username` or `name`.
+A `User` represents a name shared across inbounds. Set protocol credentials in `user({ name, credentials })` and pass that object in `users` to an inbound factory. For example, use `credentials.socks.password` for SOCKS and `credentials.vless.uuid` with optional `flow` for VLESS.
+
+The inbound factories for SOCKS, Mixed, Shadowsocks, VLESS, HTTP, VMess, Trojan, Hysteria, Hysteria2, TUIC, ShadowTLS v3, Naive, AnyTLS, and Snell support `.authUser()` for configured users.
 
 Call `inboundValue.authUser(user)` on the final inbound to match that inbound and authenticated name together. The exact `User` object must appear once, and its name must be non-empty and unique on that inbound. To match a name added through the SSM API, use `Rule.match({ inbound: managedInbound, auth_user: "alice" })`. A plain `auth_user` condition can also match a name across inbounds. An empty string can match traffic with no authenticated name.
 
 ```ts
 import { compile, inbound, outbound, route, Rule, user } from "sing-box-kit";
 
-const alice = user({ name: "alice" });
+const alice = user({ name: "alice", credentials: { socks: { password: "example-password" } } });
 const proxy = inbound
   .socks({
     tag: "proxy",
-    users: [{ user: alice, password: "example-password" }],
+    users: [alice],
   })
   .listen("127.0.0.1", { port: 1080 });
 const egress = outbound.direct({ tag: "egress" });

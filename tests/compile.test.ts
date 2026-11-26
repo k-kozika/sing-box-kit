@@ -1091,33 +1091,32 @@ describe("Phase 2 logical rules", () => {
 
 describe("Phase 3 authenticated inbounds and REALITY", () => {
   test("matches one User across VLESS, Shadowsocks, SOCKS, and Mixed with separate credentials", () => {
-    const alice = user({ name: "alice" });
-    const bob = user({ name: "bob" });
+    const alice = user({
+      name: "alice",
+      credentials: {
+        vless: { uuid, flow: "xtls-rprx-vision" },
+        shadowsocks: { password: "ss-pass" },
+        socks: { password: "socks-pass" },
+        mixed: { password: "mixed-pass" },
+      },
+    });
+    const bob = user({ name: "bob", credentials: { socks: { password: "bob-pass" } } });
     const vless = inbound.vless({
       tag: "vless",
-      users: [{ user: alice, uuid, flow: "xtls-rprx-vision" }],
+      users: [alice],
     });
     const shadow = inbound.shadowsocks({
       tag: "shadow",
       method: "aes-128-gcm",
-      users: [
-        { user: alice, password: "ss-pass" },
-        { name: "bob", password: "raw-ss" },
-      ],
+      users: [alice, { name: "bob", password: "raw-ss" }],
     });
     const socks = inbound.socks({
       tag: "socks",
-      users: [
-        { user: alice, password: "socks-pass" },
-        { user: bob, password: "bob-pass" },
-      ],
+      users: [alice, bob],
     });
     const mixed = inbound.mixed({
       tag: "mixed",
-      users: [
-        { username: "bob", password: "raw-mixed" },
-        { user: alice, password: "mixed-pass" },
-      ],
+      users: [{ username: "bob", password: "raw-mixed" }, alice],
     });
     const managed = inbound.shadowsocks({ tag: "managed", method: "aes-128-gcm", managed: true });
     const resolver = udp();
@@ -1215,32 +1214,61 @@ describe("Phase 3 authenticated inbounds and REALITY", () => {
     expect(result.dns?.rules).toEqual([{ ...tree, action: "route", server: "resolver" }]);
   });
 
+  test("preserves User identity and accepts raw entries in VMess inbounds", () => {
+    const alice = user({ name: "alice", credentials: { vmess: { uuid, alter_id: 1 } } });
+    const typed = inbound.vmess({ tag: "typed", users: [alice] });
+    const raw = inbound.vmess({ tag: "raw", users: [{ name: "legacy", uuid }] });
+    expect(
+      compile({
+        inbounds: [typed, raw],
+        route: { rules: [route.rule(typed.authUser(alice), { action: "reject" })] },
+      }),
+    ).toMatchObject({
+      inbounds: [
+        { users: [{ name: "alice", uuid, alterId: 1 }] },
+        { users: [{ name: "legacy", uuid }] },
+      ],
+      route: { rules: [{ inbound: "typed", auth_user: "alice" }] },
+    });
+  });
+
+  test("rejects invalid protocol credentials when creating a User", () => {
+    expect(() =>
+      Reflect.apply(user, undefined, [{ name: "alice", credentials: { vless: { uuid: 1 } } }]),
+    ).toThrow("user.credentials.vless.uuid");
+  });
+
   test("checks User identity, name uniqueness, final registration, and mixed formats", () => {
-    const alice = user({ name: "alice" });
-    const empty = user({ name: "" });
-    const entry = { user: alice, password: "pw" };
-    const wrongMixed = { ...entry, username: "alice" };
-    const wrongShadow = { ...entry, name: "alice" };
-    const mixed = inbound.mixed({ tag: "mixed", users: [entry] });
+    const alice = user({ name: "alice", credentials: { mixed: { password: "pw" } } });
+    const empty = user({ name: "", credentials: { socks: { password: "empty" } } });
+    const legacyEntry = { user: alice, password: "pw" };
+    const mixed = inbound.mixed({ tag: "mixed", users: [alice] });
     expect(Object.isFrozen(alice)).toBe(true);
     expect(() => mixed.authUser(user({ name: "alice" }))).toThrow("authUser");
     expect(() => mixed.authUser(user({ name: "bob" }))).toThrow("authUser");
     expect(() => inbound.socks({ tag: "socks" }).authUser(alice)).toThrow("authUser");
-    expect(() =>
-      inbound.socks({ tag: "socks", users: [{ user: empty, password: "empty" }] }).authUser(empty),
-    ).toThrow("non-empty name");
-    expect(() =>
-      inbound.mixed({ tag: "mixed", users: [entry, { username: "alice" }] }).authUser(alice),
-    ).toThrow("unique non-empty name");
-    expect(() => inbound.mixed({ tag: "mixed", users: [entry, entry] }).authUser(alice)).toThrow(
-      "authUser",
+    expect(() => inbound.socks({ tag: "socks", users: [empty] }).authUser(empty)).toThrow(
+      "non-empty name",
     );
     expect(() =>
-      inbound.mixed({ tag: "mixed", users: [wrongMixed as unknown as typeof entry] }),
-    ).toThrow("users[0].username");
-    const shadow = (users: (typeof entry)[]) =>
-      inbound.shadowsocks({ tag: "shadow", method: "aes-128-gcm", users });
-    expect(() => shadow([wrongShadow as typeof entry])).toThrow("users[0].name");
+      inbound.mixed({ tag: "mixed", users: [alice, { username: "alice" }] }).authUser(alice),
+    ).toThrow("unique non-empty name");
+    expect(() => inbound.mixed({ tag: "mixed", users: [alice, alice] }).authUser(alice)).toThrow(
+      "authUser",
+    );
+    for (const [factory, options, message] of [
+      [inbound.mixed, { users: [legacyEntry] }, "users[0].user"],
+      [inbound.shadowsocks, { method: "aes-128-gcm", users: [legacyEntry] }, "users[0].user"],
+      [inbound.socks, { users: [legacyEntry] }, "expected a User"],
+      [inbound.vless, { users: [{ user: alice, uuid }] }, "expected a User"],
+    ] as const) {
+      expect(() => Reflect.apply(factory, undefined, [{ tag: "legacy", ...options }])).toThrow(
+        message,
+      );
+    }
+    expect(() => inbound.socks({ tag: "missing", users: [alice] })).toThrow(
+      "missing socks credentials",
+    );
     const condition = mixed.authUser(alice);
     expect(() =>
       compile({
@@ -1262,9 +1290,9 @@ describe("Phase 3 authenticated inbounds and REALITY", () => {
     const select = outbound.selector({ tag: "select", outbounds: candidates });
     const domains = ["one.example"];
     const conditions = Rule.match({ domain: domains });
-    const alice = user({ name: "alice" });
-    const member = { user: alice, password: "original" };
-    const members = [member];
+    const credentials = { mixed: { password: "original" } };
+    const alice = user({ name: "alice", credentials });
+    const members = [alice];
     const mixed = inbound.mixed({ tag: "mixed", users: members });
     const rule = route.rule(mixed.authUser(alice).and(conditions), {
       action: "route",
@@ -1276,8 +1304,7 @@ describe("Phase 3 authenticated inbounds and REALITY", () => {
     http_client.http_client.detour = alternate;
     candidates[0] = alternate;
     domains[0] = "changed.example";
-    member.user = user({ name: "bob" });
-    member.password = "changed";
+    credentials.mixed.password = "changed";
     members.length = 0;
     const input = {
       outbounds: [egress, select],

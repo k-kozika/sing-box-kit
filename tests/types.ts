@@ -189,14 +189,23 @@ route.rule({ action: "reject", race: true });
 // @ts-expect-error A rule in the DNS list must have been made by dns.rule.
 compile({ dns: { rules: [route.rule({ action: "reject" })] } });
 
-const alice = user({ name: "alice" });
+const alice = user({
+  name: "alice",
+  credentials: {
+    mixed: { password: "pw" },
+    shadowsocks: { password: "pw" },
+    socks: { password: "pw" },
+    vless: { uuid: "uuid" },
+  },
+});
 const ssm = inbound.shadowsocks({ tag: "ss", method: "aes-128-gcm", managed: true });
 const staticSs = inbound
-  .shadowsocks({ tag: "ss2", method: "aes-128-gcm", users: [{ user: alice, password: "pw" }] })
+  .shadowsocks({ tag: "ss2", method: "aes-128-gcm", users: [alice] })
   .listen("127.0.0.1", { port: 1080 });
 const single = inbound.shadowsocks({ tag: "single", method: "none" });
-const vlessIn = inbound.vless({ tag: "vless-in", users: [{ user: alice, uuid: "uuid" }] });
-const socks = inbound.socks({ tag: "socks", users: [{ user: alice, password: "pw" }] });
+const vlessIn = inbound.vless({ tag: "vless-in", users: [alice] });
+const socks = inbound.socks({ tag: "socks", users: [alice] });
+inbound.mixed({ tag: "mixed", users: [alice] });
 service
   .ssmApi({ servers: { "/": ssm, "/static": staticSs } })
   .tls({ side: "server", certificate_provider: provider });
@@ -210,12 +219,20 @@ inbound.shadowsocks({
   tag: "ss",
   method: "aes-128-gcm",
   managed: true,
-  users: [{ user: alice, password: "pw" }],
+  users: [alice],
 });
 // @ts-expect-error The none method is only for single-user mode.
-inbound.shadowsocks({ tag: "ss", method: "none", users: [{ user: alice, password: "pw" }] });
-// @ts-expect-error A User entry cannot specify an explicit username.
-inbound.mixed({ tag: "mixed", users: [{ user: alice, username: "alice", password: "pw" }] });
+inbound.shadowsocks({ tag: "ss", method: "none", users: [alice] });
+// @ts-expect-error Credentials belong in user().
+inbound.mixed({ tag: "mixed", users: [{ user: alice, password: "pw" }] });
+// @ts-expect-error Credentials belong in user().
+inbound.socks({ tag: "socks", users: [{ user: alice, password: "pw" }] });
+// @ts-expect-error Credentials belong in user().
+inbound.shadowsocks({ tag: "ss", method: "aes-128-gcm", users: [{ user: alice, password: "pw" }] });
+// @ts-expect-error Credentials belong in user().
+inbound.vless({ tag: "vless", users: [{ user: alice, uuid: "uuid" }] });
+// @ts-expect-error A per-user VLESS credential is a UUID.
+user({ name: "alice", credentials: { vless: { password: "secret" } } });
 // @ts-expect-error SOCKS has no TLS method.
 socks.tls(serverTls);
 vless.tls({

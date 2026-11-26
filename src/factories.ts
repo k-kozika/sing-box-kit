@@ -1,5 +1,5 @@
 import type { SBKitInputs } from "./generated/sbkit-inputs";
-import type { ShadowsocksUser, User as RawUser, VLESSUser } from "./generated/sing-box";
+import type { ShadowsocksUser } from "./generated/sing-box";
 import { factoryCatalog, factoryName } from "./input-schema";
 import type { FactoryBranch } from "./input-schema";
 import {
@@ -25,7 +25,7 @@ import {
 } from "./settings";
 import type { ClientTls, RealityClientTls, RealityServerTls, ServerTls, TlsMode } from "./settings";
 import type { CamelCase, Fields, ReadonlyJson, StrictUnion } from "./type-utils";
-import { isUser } from "./user";
+import { isUser, requireUserCredentials } from "./user";
 import type { User } from "./user";
 
 interface ListenMethod<T> {
@@ -60,33 +60,26 @@ const endpointRoles = {
   "openvpn-client": "openvpn-client-endpoint",
 } as const satisfies Record<string, Role>;
 
-type PasswordEntry<Name extends "username" | "name"> = {
-  readonly user: User;
-  readonly password: string;
-} & { readonly [K in Name]?: never };
-type MixedEntry = PasswordEntry<"username"> | (Readonly<RawUser> & { user?: never });
-type ShadowsocksEntry = PasswordEntry<"name"> | (Readonly<ShadowsocksUser> & { user?: never });
-type VlessEntry = Required<Pick<VLESSUser, "uuid">> &
-  Pick<VLESSUser, "flow"> & { user: User; name?: never };
-
-interface AuthOptions {
-  readonly name: "name" | "username";
-  readonly credentials: readonly string[];
-  readonly required: readonly string[];
-  readonly allowRaw?: boolean;
-}
-
-const passwordAuth = {
-  name: "username",
-  credentials: ["password"],
-  required: ["password"],
-} as const;
+const namedAuth = { name: "name", allowRaw: true } as const;
+const usernameAuth = { name: "username", allowRaw: true } as const;
 const authOptions = {
-  mixed: { ...passwordAuth, allowRaw: true },
-  socks: passwordAuth,
-  shadowsocks: { ...passwordAuth, name: "name", allowRaw: true },
-  vless: { name: "name", credentials: ["uuid", "flow"], required: ["uuid"] },
-} as const satisfies Record<string, AuthOptions>;
+  anytls: namedAuth,
+  http: usernameAuth,
+  hysteria: namedAuth,
+  hysteria2: namedAuth,
+  mixed: usernameAuth,
+  naive: usernameAuth,
+  shadowsocks: namedAuth,
+  shadowtls: namedAuth,
+  snell: namedAuth,
+  socks: { name: "username", allowRaw: false },
+  trojan: namedAuth,
+  tuic: namedAuth,
+  vless: { name: "name", allowRaw: false },
+  vmess: namedAuth,
+} as const;
+type AuthKind = keyof typeof authOptions;
+type ShadowsocksEntry = User | (Readonly<ShadowsocksUser> & { user?: never });
 
 type Catalog = SBKitInputs["factories"];
 type Kind<T extends Target> = keyof Catalog[T] & string;
@@ -141,30 +134,28 @@ interface Membership {
   readonly user?: User;
   readonly name: unknown;
 }
-function prepareUsers(fields: Fields, auth: AuthOptions, path: string): readonly Membership[] {
+function prepareUsers(fields: Fields, kind: AuthKind, path: string): readonly Membership[] {
   if (fields.users === undefined) return [];
   const users = fields.users;
   if (!Array.isArray(users)) fail(`${path}.users`, "expected an array");
+  const auth = authOptions[kind];
   const members: Membership[] = [];
   fields.users = Array.from(users, (value, index) => {
     const entryPath = `${path}.users[${index}]`;
-    const entry = record(value, entryPath);
-    if (!Object.hasOwn(entry, "user") && auth.allowRaw) {
-      const raw = fieldsFrom(entry, entryPath, [auth.name, ...auth.credentials]);
-      members.push({ name: raw[auth.name] });
-      return raw;
+    if (isUser(value)) {
+      members.push({ user: value, name: value.name });
+      if (kind === "vmess") {
+        const { alter_id, ...credentials } = requireUserCredentials(value, kind, entryPath);
+        return { name: value.name, ...credentials, alterId: alter_id };
+      }
+      return { [auth.name]: value.name, ...requireUserCredentials(value, kind, entryPath) };
     }
-    if (Object.hasOwn(entry, auth.name))
-      fail(keyPath(entryPath, auth.name), "explicit name with User");
-    const { user, ...credentials } = fieldsFrom(
-      entry,
-      entryPath,
-      ["user", ...auth.credentials],
-      ["user", ...auth.required],
-    );
-    if (!isUser(user)) fail(`${entryPath}.user`, "expected a User");
-    members.push({ user, name: user.name });
-    return { [auth.name]: user.name, ...credentials };
+    if (!auth.allowRaw) fail(entryPath, "expected a User from user()");
+    const raw = record(value, entryPath);
+    if (Object.hasOwn(raw, "user"))
+      fail(`${entryPath}.user`, "pass the User directly and configure credentials in user()");
+    members.push({ name: raw[auth.name] });
+    return raw;
   });
   return members;
 }
@@ -275,9 +266,7 @@ function makeFactory(target: Target, kind: string, branches: FactoryBranch[]) {
   const path = `${target}.${kind}`;
   const validators = new Map<FactoryBranch, ReturnType<typeof compileSchema>>();
   const auth =
-    target === "inbounds" && Object.hasOwn(authOptions, kind)
-      ? authOptions[kind as keyof typeof authOptions]
-      : undefined;
+    target === "inbounds" && Object.hasOwn(authOptions, kind) ? (kind as AuthKind) : undefined;
   return (input: unknown = {}): Resource => {
     const raw = record(input, path);
     const branch =
@@ -295,7 +284,8 @@ function makeFactory(target: Target, kind: string, branches: FactoryBranch[]) {
       branch.options.required,
     );
     validateTag(options.tag, `${path}.tag`);
-    const members = auth ? prepareUsers(options, auth, path) : [];
+    const users = auth ? prepareUsers(options, auth, path) : [];
+    const members = kind === "shadowtls" && options.version !== 3 ? [] : users;
     const roles = getRoles(target, kind);
     prepareOptions(target, kind, options, path, roles);
     const base = snapshot(target === "http_clients" ? options : { type: kind, ...options }, path);
@@ -417,21 +407,24 @@ type ShadowsocksOptions = ShadowsocksBase &
     | { method: MultiMethod; managed?: false; users?: readonly ShadowsocksEntry[] }
   );
 
-type AuthOptionsFor<K extends "mixed" | "socks" | "vless", U> = Omit<
-  Options<"inbounds", K>,
-  "users"
-> &
-  U;
-type InboundFactories = Omit<Factories<"inbounds">, keyof typeof authOptions> & {
-  mixed(
-    options: AuthOptionsFor<"mixed", { users?: readonly MixedEntry[] }>,
-  ): Built<"inbounds", "mixed">;
-  socks(
-    options: AuthOptionsFor<"socks", { users?: readonly PasswordEntry<"username">[] }>,
-  ): Built<"inbounds", "socks">;
-  vless(
-    options: AuthOptionsFor<"vless", { users: readonly VlessEntry[] }>,
-  ): Built<"inbounds", "vless">;
+type InboundUsers<O, K extends AuthKind> = O extends { users?: readonly (infer Entry)[] }
+  ? Omit<O, "users"> &
+      (O extends { users: unknown }
+        ? { readonly users: readonly User[] }
+        : {
+            readonly users?: readonly (
+              | User
+              | ((typeof authOptions)[K]["allowRaw"] extends true
+                  ? Entry & { user?: never }
+                  : never)
+            )[];
+          })
+  : O;
+type InboundFactories = Omit<Factories<"inbounds">, AuthKind> & {
+  [K in Exclude<AuthKind, "shadowsocks">]: (
+    options: StrictUnion<InboundUsers<Options<"inbounds", K>, K>>,
+  ) => Built<"inbounds", K>;
+} & {
   shadowsocks: {
     (
       options: ManagedShadowsocks | StaticShadowsocks,
