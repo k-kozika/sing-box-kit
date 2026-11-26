@@ -2,11 +2,19 @@ import { isIP } from "node:net";
 import type { SingBoxConfig } from "./generated/sing-box";
 import { copyJson, expandFields, fieldsFrom, ref, resourceData } from "./resource";
 import type {
-  DnsServer, Egress, Fields, ReadonlyJson, Resolve, Resource, ResourceData, TaggedHttpClient, Target,
+  DnsServer,
+  Egress,
+  Fields,
+  ReadonlyJson,
+  Resolve,
+  Resource,
+  ResourceData,
+  TaggedHttpClient,
+  Target,
 } from "./resource";
 import { checkDnsRules, expandRule } from "./rules";
 import type { RuleValue } from "./rules";
-import { fail, keyPath, validateConfig } from "./schema";
+import { fail, validateConfig } from "./schema";
 import { expandResolver, isEmptyDirect } from "./settings";
 import type { DomainResolver } from "./settings";
 
@@ -36,9 +44,21 @@ export interface CompileInput {
 
 type TopLevelTarget = Exclude<Target, "dns.servers" | "route.rule_set">;
 const topLevelLists = [
-  "inbounds", "outbounds", "endpoints", "services", "http_clients", "certificate_providers", "network_namespaces",
+  "inbounds",
+  "outbounds",
+  "endpoints",
+  "services",
+  "http_clients",
+  "certificate_providers",
+  "network_namespaces",
 ] as const satisfies readonly TopLevelTarget[];
-const routeKeys = ["rules", "rule_set", "final", "default_domain_resolver", "default_http_client"] as const;
+const routeKeys = [
+  "rules",
+  "rule_set",
+  "final",
+  "default_domain_resolver",
+  "default_http_client",
+] as const;
 const dnsKeys = ["rules", "servers", "final"] as const;
 
 interface Registered {
@@ -87,8 +107,15 @@ function checkCycles(resources: Iterable<Registered>): void {
  * same tag, rebuild its references so they refer to the new value.
  */
 export function compile(input: CompileInput): SingBoxConfig {
-  const fields = fieldsFrom(input, "config", ["log", "experimental", ...topLevelLists, "route", "dns"]);
-  const route = fields.route === undefined ? undefined : fieldsFrom(fields.route, "route", routeKeys);
+  const fields = fieldsFrom(input, "config", [
+    "log",
+    "experimental",
+    ...topLevelLists,
+    "route",
+    "dns",
+  ]);
+  const route =
+    fields.route === undefined ? undefined : fieldsFrom(fields.route, "route", routeKeys);
   const dns = fields.dns === undefined ? undefined : fieldsFrom(fields.dns, "dns", dnsKeys);
   const scopes = new Map<Target, Map<string, Registered>>();
   const registrations = new Map<Resource, Registered>();
@@ -111,16 +138,19 @@ export function compile(input: CompileInput): SingBoxConfig {
       const data = resourceData(item);
       if (!data || data.target !== target) fail(path, `expected a ${target} resource`);
       const explicit = fieldTags(data);
-      if (!explicit.length && target !== "services") fail(`${path}.tag`, "tagged resource required");
+      if (!explicit.length && target !== "services")
+        fail(`${path}.tag`, "tagged resource required");
       const entry: Registered = {
         value: item as Resource,
         data,
         path,
-        tags: explicit.length ? explicit.map((value, i) => {
-          const tagPath = Array.isArray(data.fields.tag) ? `${path}.tag[${i}]` : `${path}.tag`;
-          if (typeof value !== "string" || !value) fail(tagPath, "expected a non-empty tag");
-          return value;
-        }) : [String(index)],
+        tags: explicit.length
+          ? explicit.map((value, i) => {
+              const tagPath = Array.isArray(data.fields.tag) ? `${path}.tag[${i}]` : `${path}.tag`;
+              if (typeof value !== "string" || !value) fail(tagPath, "expected a non-empty tag");
+              return value;
+            })
+          : [String(index)],
         dependencies: [],
       };
 
@@ -135,7 +165,7 @@ export function compile(input: CompileInput): SingBoxConfig {
   }
 
   const lists = new Map<Target, Registered[] | undefined>(
-    topLevelLists.map(target => [target, registerList(fields[target], target)]),
+    topLevelLists.map((target) => [target, registerList(fields[target], target)]),
   );
   lists.set("route.rule_set", registerList(route?.rule_set, "route.rule_set"));
   lists.set("dns.servers", registerList(dns?.servers, "dns.servers"));
@@ -147,7 +177,8 @@ export function compile(input: CompileInput): SingBoxConfig {
       const tags = fieldTags(data);
       const tag = tags.length === 1 && typeof tags[0] === "string" && tags[0] ? tags[0] : undefined;
       const capability = role === "dial-detour" ? "egress" : role;
-      if (!data.roles.includes(capability)) fail(path, `target lacks ${capability} capability`, tag);
+      if (!data.roles.includes(capability))
+        fail(path, `target lacks ${capability} capability`, tag);
       if (!tag) fail(path, "reference requires a single explicit tag");
       const target = registrations.get(value as Resource);
       if (!target) fail(path, "referenced final value is unregistered", tag);
@@ -156,7 +187,8 @@ export function compile(input: CompileInput): SingBoxConfig {
         const egress = tagScope("outbounds").get(tag);
         const endpoint = egress?.data.target === "endpoints" ? egress : undefined;
         if (role === "inbound" && inbound && endpoint) fail(path, "ambiguous inbound tag", tag);
-        if ((inbound ?? endpoint) !== target) fail(path, "inbound tag resolves to another resource", tag);
+        if ((inbound ?? endpoint) !== target)
+          fail(path, "inbound tag resolves to another resource", tag);
       }
       if (role === "dial-detour" && data.kind === "direct" && isEmptyDirect(data.fields)) {
         fail(path, "empty direct outbound cannot be an explicit detour", tag);
@@ -165,8 +197,10 @@ export function compile(input: CompileInput): SingBoxConfig {
         const edge = path.slice(origin.path.length);
         const group = role === "egress" && edge.startsWith(".outbounds[");
         const detour = role === "dial-detour" && edge === ".detour" && origin.data.startupDetour;
-        const resolver = role === "dns-server" && origin.data.target === "dns.servers"
-          && (edge === ".domain_resolver" || edge === ".domain_resolver.server");
+        const resolver =
+          role === "dns-server" &&
+          origin.data.target === "dns.servers" &&
+          (edge === ".domain_resolver" || edge === ".domain_resolver.server");
         if (group || detour || resolver) origin.dependencies.push({ target, path, tag });
       }
       return tag;
@@ -174,11 +208,16 @@ export function compile(input: CompileInput): SingBoxConfig {
   }
 
   function emitList(target: Target): Fields[] | undefined {
-    return lists.get(target)?.map(entry => {
+    return lists.get(target)?.map((entry) => {
       const { data, path } = entry;
       const { server, detour, domain_resolver } = data.fields;
-      if (data.remoteDns && typeof server === "string" && !isIP(server)
-        && detour === undefined && domain_resolver === undefined) {
+      if (
+        data.remoteDns &&
+        typeof server === "string" &&
+        !isIP(server) &&
+        detour === undefined &&
+        domain_resolver === undefined
+      ) {
         fail(`${path}.domain_resolver`, "hostname requires a per-server resolver or detour");
       }
       return expandFields(data.fields, data.references ?? {}, path, resolveFrom(entry));
@@ -195,25 +234,39 @@ export function compile(input: CompileInput): SingBoxConfig {
     if (values !== undefined) output[target] = values;
   }
   if (route) {
-    output.route = expandFields(route, {
-      rule_set: () => emitList("route.rule_set"),
-      final: ref("egress"),
-      default_domain_resolver: expandResolver,
-      default_http_client: ref("http-client"),
-      rules: (values, path) => array(values, path).map((value, index) =>
-        expandRule(value, "route", `${path}[${index}]`, resolve)),
-    }, "route", resolve);
+    output.route = expandFields(
+      route,
+      {
+        rule_set: () => emitList("route.rule_set"),
+        final: ref("egress"),
+        default_domain_resolver: expandResolver,
+        default_http_client: ref("http-client"),
+        rules: (values, path) =>
+          array(values, path).map((value, index) =>
+            expandRule(value, "route", `${path}[${index}]`, resolve),
+          ),
+      },
+      "route",
+      resolve,
+    );
   }
   if (dns) {
-    output.dns = expandFields(dns, {
-      servers: () => emitList("dns.servers"),
-      final: ref("dns-server"),
-      rules: (values, path) => {
-        const rules = array(values, path).map((value, index) => expandRule(value, "dns", `${path}[${index}]`, resolve));
-        checkDnsRules(rules, path);
-        return rules;
+    output.dns = expandFields(
+      dns,
+      {
+        servers: () => emitList("dns.servers"),
+        final: ref("dns-server"),
+        rules: (values, path) => {
+          const rules = array(values, path).map((value, index) =>
+            expandRule(value, "dns", `${path}[${index}]`, resolve),
+          );
+          checkDnsRules(rules, path);
+          return rules;
+        },
       },
-    }, "dns", resolve);
+      "dns",
+      resolve,
+    );
   }
   checkCycles(registrations.values());
   return validateConfig(output);

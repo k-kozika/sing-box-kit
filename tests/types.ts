@@ -1,13 +1,39 @@
 import {
-  certificateProvider, compile, dns, dnsServer, endpoint, httpClient, inbound, networkNamespace,
-  outbound, route, Rule, ruleSet, service, user, validateConfig,
+  certificateProvider,
+  compile,
+  dns,
+  dnsServer,
+  endpoint,
+  httpClient,
+  inbound,
+  networkNamespace,
+  outbound,
+  route,
+  Rule,
+  ruleSet,
+  service,
+  user,
+  validateConfig,
 } from "../index";
-import type { CompileInput, DnsRuleAction, RouteRuleAction, RuleAction, SingBoxConfig } from "../index";
+import type {
+  CompileInput,
+  DnsRuleAction,
+  RouteRuleAction,
+  RuleAction,
+  SingBoxConfig,
+} from "../index";
 
 const direct = outbound.direct({ tag: "out" }).dial({ connect_timeout: "5s" });
-const client = httpClient({ tag: "client", headers: { "my-header": ["one", "two"] } }).dial({ detour: direct });
+const client = httpClient({ tag: "client", headers: { "my-header": ["one", "two"] } }).dial({
+  detour: direct,
+});
 const mixed = inbound.mixed({ tag: "mixed" });
-const vless = outbound.vless({ tag: "proxy", server: "host.example", server_port: 443, uuid: "uuid" });
+const vless = outbound.vless({
+  tag: "proxy",
+  server: "host.example",
+  server_port: 443,
+  uuid: "uuid",
+});
 const serverTls = { side: "server", certificate_path: "cert.pem", key_path: "key.pem" } as const;
 const clientTls = { side: "client", certificate_path: "ca.pem" } as const;
 const config: SingBoxConfig = compile({
@@ -15,7 +41,12 @@ const config: SingBoxConfig = compile({
   experimental: { cache_file: { enabled: true } },
   outbounds: [direct, vless.tls(clientTls)],
   inbounds: [mixed.listen("127.0.0.1", { port: 1080 }).tls(serverTls)],
-  services: [service.api({ dashboard: { http_client: client } }).listen("127.0.0.1", { port: 9090 }).tls(serverTls)],
+  services: [
+    service
+      .api({ dashboard: { http_client: client } })
+      .listen("127.0.0.1", { port: 9090 })
+      .tls(serverTls),
+  ],
   http_clients: [client],
 });
 validateConfig(config);
@@ -50,8 +81,11 @@ compile({ http_clients: [httpClient()] });
 service.api({ dashboard: { http_client: { tag: "inline", version: 2 } } });
 // @ts-expect-error Raw detour tags are also disallowed in inline objects.
 service.api({ dashboard: { http_client: { detour: "out" } } });
-// @ts-expect-error Generated rule types reject unknown keys.
-const invalidRule: NonNullable<NonNullable<SingBoxConfig["route"]>["rules"]>[number] = { action: "reject", unknown: true };
+const _invalidRule: NonNullable<NonNullable<SingBoxConfig["route"]>["rules"]>[number] = {
+  action: "reject",
+  // @ts-expect-error Generated rule types reject unknown keys.
+  unknown: true,
+};
 
 const ns = networkNamespace.unshare({ tag: "ns" });
 const ts = endpoint.tailscale({ tag: "ts" }).dial({ netns: ns });
@@ -59,7 +93,8 @@ const wg = endpoint.wireguard({ tag: "wg", address: ["192.0.2.3/32"], private_ke
 const provider = certificateProvider.tailscale({ tag: "cert", endpoint: ts });
 const udp = dnsServer.udp({ tag: "udp", server: "192.0.2.53" });
 const preferred = dnsServer.tailscale({ tag: "tdns", endpoint: ts });
-const https = dnsServer.https({ tag: "doh", server: "resolver.example", path: "/dns-query" })
+const https = dnsServer
+  .https({ tag: "doh", server: "resolver.example", path: "/dns-query" })
   .dial({ domain_resolver: { server: udp, rewrite_ttl: 0 } })
   .tls(clientTls);
 dnsServer.tls({ tag: "dot", server: "192.0.2.54" }).tls({ side: "client" });
@@ -67,13 +102,26 @@ const selector = outbound.selector({ tag: "select", outbounds: [direct, wg], def
 outbound.urltest({ tag: "test", outbounds: [direct, wg] });
 const inline = ruleSet.inline({ tag: "domains", rules: [{ domain_suffix: ["example.test"] }] });
 const local = ruleSet.local({ tag: ["first", "second"], path: "/tmp/{tag}.srs" });
-const remote = ruleSet.remote({ tag: "remote", url: "https://example.test/set.json", http_client: {
-  version: 2, tls: { enabled: true }, stream_receive_window: "32KiB", detour: direct,
-} });
-const sharedCondition = Rule.match({ inbound: [mixed, ts], rule_set: [inline, remote], port: [53, 853] });
+const remote = ruleSet.remote({
+  tag: "remote",
+  url: "https://example.test/set.json",
+  http_client: {
+    version: 2,
+    tls: { enabled: true },
+    stream_receive_window: "32KiB",
+    detour: direct,
+  },
+});
+const sharedCondition = Rule.match({
+  inbound: [mixed, ts],
+  rule_set: [inline, remote],
+  port: [53, 853],
+});
 const routeCondition = Rule.match({ client: "chrome", preferred_by: [ts, wg] });
 const dnsCondition = Rule.match({ query_type: 1, preferred_by: preferred });
-const optionalPreference: { domain: string; preferred_by?: typeof preferred } = { domain: "example.test" };
+const optionalPreference: { domain: string; preferred_by?: typeof preferred } = {
+  domain: "example.test",
+};
 route.rule(sharedCondition.and(routeCondition), { action: "route", outbound: selector });
 dns.rule(sharedCondition.or(dnsCondition), { action: "route", server: https });
 dns.rule(Rule.match(optionalPreference), { action: "respond" });
@@ -85,8 +133,15 @@ const action: RuleAction<"dns"> = dnsAction;
 route.rule(routeAction);
 dns.rule(action);
 compile({
-  endpoints: [ts, wg], network_namespaces: [ns], certificate_providers: [provider],
-  route: { rule_set: [inline, local, remote], default_domain_resolver: udp, default_http_client: client, final: wg },
+  endpoints: [ts, wg],
+  network_namespaces: [ns],
+  certificate_providers: [provider],
+  route: {
+    rule_set: [inline, local, remote],
+    default_domain_resolver: udp,
+    default_http_client: client,
+    final: wg,
+  },
   dns: { servers: [udp, https, preferred], final: udp },
 });
 // @ts-expect-error Endpoint detours are outbound-only.
@@ -122,7 +177,10 @@ dns.rule(Rule.match({ preferred_by: wg }), { action: "respond" });
 // @ts-expect-error Actions are not match fields.
 Rule.match({ domain: "example.test", action: "reject" });
 // @ts-expect-error Conditions do not accept extra fields through variables either.
-const matchAction = Rule.match({ domain: "example.test", action: "reject" } as { domain: string; action: string });
+const _matchAction = Rule.match({ domain: "example.test", action: "reject" } as {
+  domain: string;
+  action: string;
+});
 // @ts-expect-error Route's route action requires an outbound.
 route.rule({ action: "route" });
 // @ts-expect-error DNS evaluate needs a DNS server.
@@ -134,26 +192,49 @@ compile({ dns: { rules: [route.rule({ action: "reject" })] } });
 
 const alice = user({ name: "alice" });
 const ssm = inbound.shadowsocks({ tag: "ss", method: "aes-128-gcm", managed: true });
-const staticSs = inbound.shadowsocks({ tag: "ss2", method: "aes-128-gcm", users: [{ user: alice, password: "pw" }] })
+const staticSs = inbound
+  .shadowsocks({ tag: "ss2", method: "aes-128-gcm", users: [{ user: alice, password: "pw" }] })
   .listen("127.0.0.1", { port: 1080 });
 const single = inbound.shadowsocks({ tag: "single", method: "none" });
 const vlessIn = inbound.vless({ tag: "vless-in", users: [{ user: alice, uuid: "uuid" }] });
 const socks = inbound.socks({ tag: "socks", users: [{ user: alice, password: "pw" }] });
-service.ssmApi({ servers: { "/": ssm, "/static": staticSs } }).tls({ side: "server", certificate_provider: provider });
+service
+  .ssmApi({ servers: { "/": ssm, "/static": staticSs } })
+  .tls({ side: "server", certificate_provider: provider });
 dns.rule(socks.authUser(alice).or(staticSs.authUser(alice)), { action: "route", server: udp });
 route.rule(vlessIn.authUser(alice), { action: "bypass", outbound: wg });
 Rule.match({ auth_user: ["", "alice"] });
 // @ts-expect-error Single-user Shadowsocks lacks the management capability.
 service.ssmApi({ servers: { "/": single } });
 // @ts-expect-error Managed mode is incompatible with static users.
-inbound.shadowsocks({ tag: "ss", method: "aes-128-gcm", managed: true, users: [{ user: alice, password: "pw" }] });
+inbound.shadowsocks({
+  tag: "ss",
+  method: "aes-128-gcm",
+  managed: true,
+  users: [{ user: alice, password: "pw" }],
+});
 // @ts-expect-error The none method is only for single-user mode.
 inbound.shadowsocks({ tag: "ss", method: "none", users: [{ user: alice, password: "pw" }] });
 // @ts-expect-error A User entry cannot specify an explicit username.
 inbound.mixed({ tag: "mixed", users: [{ user: alice, username: "alice", password: "pw" }] });
 // @ts-expect-error SOCKS has no TLS method.
 socks.tls(serverTls);
-// @ts-expect-error REALITY server credentials cannot be sent to a client profile.
-vless.tls({ side: "client", server_name: "cover.example", reality: { private_key: "key", short_id: "" } });
+vless.tls({
+  side: "client",
+  server_name: "cover.example",
+  // @ts-expect-error REALITY server credentials cannot be sent to a client profile.
+  reality: { private_key: "key", short_id: "" },
+});
+const mixedTlsProfile = {
+  side: "server",
+  server_name: "cover.example",
+  certificate_path: "cert.pem",
+  key_path: "key.pem",
+  reality: {
+    private_key: "key",
+    short_id: "",
+    handshake: { server: "example.test", server_port: 443 },
+  },
+} as const;
 // @ts-expect-error Certificate files cannot be mixed with REALITY.
-vlessIn.tls({ side: "server", server_name: "cover.example", certificate_path: "cert.pem", reality: { private_key: "key", short_id: "", handshake: { server: "example.test", server_port: 443 } } });
+vlessIn.tls(mixedTlsProfile);

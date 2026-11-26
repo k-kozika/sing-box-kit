@@ -4,17 +4,17 @@ Create resources with the factories exported from the project root. Pass type-sp
 
 ## Factories and registration
 
-| Factories | Register in |
-| --- | --- |
-| `inbound.mixed()`, `inbound.socks()`, `inbound.shadowsocks()`, `inbound.vless()` | `inbounds` |
-| `outbound.direct()`, `outbound.vless()`, `outbound.selector()`, `outbound.urltest()` | `outbounds` |
-| `endpoint.tailscale()`, `endpoint.wireguard()` | `endpoints` |
-| `service.api()`, `service.ssmApi()` | `services` |
-| Tagged `httpClient()` | `http_clients` |
-| `dnsServer.tcp()`, `dnsServer.udp()`, `dnsServer.tls()`, `dnsServer.https()`, `dnsServer.tailscale()` | `dns.servers` |
-| `ruleSet.inline()`, `ruleSet.local()`, `ruleSet.remote()` | `route.rule_set` |
-| `certificateProvider.tailscale()` | `certificate_providers` |
-| `networkNamespace.default()`, `networkNamespace.unshare()` | `network_namespaces` |
+| Factories                                                                                             | Register in             |
+| ----------------------------------------------------------------------------------------------------- | ----------------------- |
+| `inbound.mixed()`, `inbound.socks()`, `inbound.shadowsocks()`, `inbound.vless()`                      | `inbounds`              |
+| `outbound.direct()`, `outbound.vless()`, `outbound.selector()`, `outbound.urltest()`                  | `outbounds`             |
+| `endpoint.tailscale()`, `endpoint.wireguard()`                                                        | `endpoints`             |
+| `service.api()`, `service.ssmApi()`                                                                   | `services`              |
+| Tagged `httpClient()`                                                                                 | `http_clients`          |
+| `dnsServer.tcp()`, `dnsServer.udp()`, `dnsServer.tls()`, `dnsServer.https()`, `dnsServer.tailscale()` | `dns.servers`           |
+| `ruleSet.inline()`, `ruleSet.local()`, `ruleSet.remote()`                                             | `route.rule_set`        |
+| `certificateProvider.tailscale()`                                                                     | `certificate_providers` |
+| `networkNamespace.default()`, `networkNamespace.unshare()`                                            | `network_namespaces`    |
 
 Builder methods return new values. Register and reference the same final value after applying the settings. If you rebuild a resource with the same tag, rebuild any references to it. Apply each settings method at most once per chain.
 

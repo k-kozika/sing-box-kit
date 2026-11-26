@@ -18,36 +18,40 @@ Call `inboundValue.authUser(user)` on the final inbound to match that inbound an
 import { compile, inbound, outbound, route, Rule, user } from "./index";
 
 const alice = user({ name: "alice" });
-const proxy = inbound.socks({
-  tag: "proxy",
-  users: [{ user: alice, password: "example-password" }],
-}).listen("127.0.0.1", { port: 1080 });
+const proxy = inbound
+  .socks({
+    tag: "proxy",
+    users: [{ user: alice, password: "example-password" }],
+  })
+  .listen("127.0.0.1", { port: 1080 });
 const egress = outbound.direct({ tag: "egress" });
 const allowed = proxy.authUser(alice).and(Rule.match({ domain_suffix: "example.test" }));
 
 compile({
   inbounds: [proxy],
   outbounds: [egress],
-  route: { rules: [
-    route.rule(allowed, { action: "route", outbound: egress }),
-    route.rule({ action: "reject" }),
-  ] },
+  route: {
+    rules: [
+      route.rule(allowed, { action: "route", outbound: egress }),
+      route.rule({ action: "reject" }),
+    ],
+  },
 });
 ```
 
 ## Actions
 
-| Rule scope | Action | Options |
-| --- | --- | --- |
-| Route | `route` | Requires an egress `outbound` |
-| Route | `bypass` | Optional egress `outbound` |
-| Route | `hijack-dns` | None |
-| DNS | `route` | Requires a DNS `server`. Accepts shared DNS options, `race`, and `speculative` |
-| DNS | `evaluate` | Requires a DNS `server`. Accepts a result `tag`, shared DNS options, and `speculative` |
-| DNS | `respond` | Optional `race` |
-| DNS | `route-options` | Requires at least one effective shared DNS option |
-| DNS | `predefined` | Optional `rcode`, `answer`, `ns`, `extra`, and `race` |
-| Both | `reject` | Optional `method` of `default` or `drop`, plus `no_drop`. DNS also accepts `race` |
+| Rule scope | Action          | Options                                                                                |
+| ---------- | --------------- | -------------------------------------------------------------------------------------- |
+| Route      | `route`         | Requires an egress `outbound`                                                          |
+| Route      | `bypass`        | Optional egress `outbound`                                                             |
+| Route      | `hijack-dns`    | None                                                                                   |
+| DNS        | `route`         | Requires a DNS `server`. Accepts shared DNS options, `race`, and `speculative`         |
+| DNS        | `evaluate`      | Requires a DNS `server`. Accepts a result `tag`, shared DNS options, and `speculative` |
+| DNS        | `respond`       | Optional `race`                                                                        |
+| DNS        | `route-options` | Requires at least one effective shared DNS option                                      |
+| DNS        | `predefined`    | Optional `rcode`, `answer`, `ns`, `extra`, and `race`                                  |
+| Both       | `reject`        | Optional `method` of `default` or `drop`, plus `no_drop`. DNS also accepts `race`      |
 
 Shared DNS options include `timeout`, `disable_cache`, `disable_optimistic_cache`, `rewrite_ttl`, `client_subnet`, and `remove_client_subnet`. For `route-options`, a positive timeout, a true flag, a valid subnet, or an explicit TTL counts as effective. A TTL of zero counts.
 
