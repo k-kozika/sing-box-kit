@@ -1,105 +1,27 @@
-Use Bun for TypeScript scripts and tests. Use Vite+ for library builds and static checks.
+# Repository Guidelines
 
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `vp install --frozen-lockfile` to install the locked Bun dependencies.
-- Use `vp check` for formatting, lint, and type checks. Use `vp fmt` to apply formatting.
-- Use `vp pack` to build the JavaScript bundle and bundled type declarations.
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
+## Project Structure
 
-## APIs
+SBKit builds and validates sing-box configurations in TypeScript. The public API is exported from `index.ts`. In `src/`, `factories.ts` exposes resource builders, `compile.ts` assembles configurations, `rules.ts` handles route and DNS rules, and `schema.ts` validates raw configs with Ajv. User-facing examples and API behavior live in `README.md` and `docs/`.
 
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
+The upstream schema snapshot and its version and revision live in `schema/`. Follow [the schema generation guide](schema/README.md) when changing schema inputs or updating the pin. Regenerate and commit the corresponding files in `src/generated/`.
+
+## Build, Test, and Development Commands
+
+- `vp install --frozen-lockfile` installs dependencies from the Bun lockfile.
+- `vp check` checks formatting, lint, and types. Apply formatting with `vp fmt`.
+- `bun test` runs the test suite. Run a focused suite with `bun test tests/compile.test.ts`.
+- `bun run build` uses Vite+ to emit the ESM bundle and type declarations in `dist/`.
+- To try the README example locally, import from `./index` in `config.ts` and run `bun config.ts`.
+
+## Coding Style
+
+Use strict TypeScript with two-space indentation, double quotes, semicolons, and explicit `import type` for type-only imports. Use camelCase for TypeScript functions and factory names, PascalCase for types, and kebab-case for multiword file names. Keep upstream field names such as `listen_port` in configuration objects. Keep the public API compatible with Bun and Node.js.
 
 ## Testing
 
-Use `bun test` to run tests.
+Use `bun:test` in `tests/*.test.ts` with names that describe the behavior under test. Exercise public behavior through `index.ts` and add compile-time API cases to `tests/types.ts`. For schema or compilation changes, run `bun tests/sing-box-check.ts` with the binary pinned in `schema/version.json` on `PATH` or via `SING_BOX`. CI also verifies generated files and smoke-tests the packed library on Node.js.
 
-```ts#index.test.ts
-import { test, expect } from "bun:test";
+## Commits and Pull Requests
 
-test("hello world", () => {
-  expect(1).toBe(1);
-});
-```
-
-## Frontend
-
-Use HTML imports with `Bun.serve()` for frontend entry points. HTML imports support React, CSS, and Tailwind.
-
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+Use short imperative commit subjects, such as “Support all pinned sing-box configuration kinds.” In pull requests, summarize user-visible changes, link related issues when available, and list the checks you ran. Include an example configuration when it helps explain a public API change.
