@@ -1,14 +1,46 @@
-# Route and DNS rules
+# Routing rules and shared conditions
 
-Use `Rule.match(fields)` to create a condition. Attach an action with `route.rule(condition, action)` or `dns.rule(condition, action)` and add the result to the matching list in `compile()`. The one-argument form, such as `route.rule({ action: "reject" })`, matches all traffic that reaches the rule.
+Use `Rule.match(fields)` to create a condition. Attach an action with `route.rule(condition, action)` and put the result in `route.rules`. The one-argument form, such as `route.rule({ action: "reject" })`, matches all traffic that reaches the rule.
+
+```ts
+import { compile, outbound, route, Rule } from "sing-box-kit";
+
+const direct = outbound.direct({ tag: "direct" });
+compile({
+  outbounds: [direct],
+  route: {
+    rules: [
+      route.rule(Rule.match({ domain_suffix: "example.test" }), {
+        action: "route",
+        outbound: direct,
+      }),
+      route.rule({ action: "reject" }),
+    ],
+  },
+});
+```
 
 ## Match conditions
 
-Use the route and DNS condition fields from the pinned schema. Shared fields include `domain`, `domain_suffix`, `network`, `port`, `inbound`, `rule_set`, and `auth_user`. `client`, `network: "icmp"`, and `ip_cidr` without response matching are route conditions. `query_type`, `query_client_subnet`, `query_dnssec`, and response matching are DNS conditions.
+Use the condition fields from the pinned schema. Route and DNS rules share fields such as `domain`, `domain_suffix`, `network`, `port`, `inbound`, `rule_set`, and `auth_user`. Routing rules also support `client`, `network: "icmp"`, and `ip_cidr` for the destination address.
 
-The `inbound`, `rule_set`, and `preferred_by` fields accept one typed resource or an array of typed resources. Route `preferred_by` accepts Tailscale, WireGuard, OpenConnect, and OpenVPN client endpoints and Bridge outbounds. DNS `preferred_by` accepts Hosts, Local, mDNS, Tailscale, OpenConnect, OpenVPN, and Resolved DNS servers.
+The `inbound`, `rule_set`, and `preferred_by` fields accept one typed resource or an array of typed resources. Route `preferred_by` accepts Tailscale, WireGuard, OpenConnect, and OpenVPN client endpoints and Bridge outbounds. See [DNS match conditions](dns-rules.md#match-conditions) for DNS-specific fields and server types.
 
 Use `.and()`, `.or()`, and `.not()` to build a condition tree. Each group retains its operand order, so `a.or(b).and(c)` means `(a OR b) AND c`. The action appears at the top level. Combining conditions requires at least one rule scope common to both operands.
+
+## Route actions
+
+| Action          | Options                                                                                |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `route`         | Requires an egress `outbound`. Accepts route options.                                  |
+| `bypass`        | Optional egress `outbound`. Accepts route options.                                     |
+| `hijack-dns`    | None                                                                                   |
+| `route-options` | Route options such as `override_address` and `override_port`                           |
+| `sniff`         | Optional `sniffer` and `timeout`                                                       |
+| `resolve`       | Optional typed DNS `server`, strategy, timeout, cache settings, TTL, and client subnet |
+| `reject`        | Optional `method` of `default`, `drop`, or `reply` for ICMP echo, plus `no_drop`       |
+
+Route options include `override_address`, `override_port`, and the other fields defined by the pinned schema. Use these options with `route`, `bypass`, or `route-options`.
 
 ## Match authenticated users
 
@@ -17,7 +49,7 @@ A `User` represents a name shared across inbounds. Supply credentials on each in
 Call `inboundValue.authUser(user)` on the final inbound to match that inbound and authenticated name together. The exact `User` object must appear once, and its name must be non-empty and unique on that inbound. To match a name added through the SSM API, use `Rule.match({ inbound: managedInbound, auth_user: "alice" })`. A plain `auth_user` condition can also match a name across inbounds. An empty string can match traffic with no authenticated name.
 
 ```ts
-import { compile, inbound, outbound, route, Rule, user } from "./index";
+import { compile, inbound, outbound, route, Rule, user } from "sing-box-kit";
 
 const alice = user({ name: "alice" });
 const proxy = inbound
@@ -40,49 +72,3 @@ compile({
   },
 });
 ```
-
-## Actions
-
-| Rule scope | Action          | Options                                                                                                                     |
-| ---------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Route      | `route`         | Requires an egress `outbound`. Accepts route options.                                                                       |
-| Route      | `bypass`        | Optional egress `outbound`. Accepts route options.                                                                          |
-| Route      | `hijack-dns`    | None                                                                                                                        |
-| Route      | `route-options` | Route options such as `override_address` and `override_port`                                                                |
-| Route      | `sniff`         | Optional `sniffer` and `timeout`                                                                                            |
-| Route      | `resolve`       | Optional typed DNS `server`, strategy, timeout, cache settings, TTL, and client subnet                                      |
-| DNS        | `route`         | Requires a DNS `server`. Accepts shared DNS options, `race`, and `speculative`                                              |
-| DNS        | `evaluate`      | Requires a DNS `server`. Accepts a result `tag`, shared DNS options, and `speculative`                                      |
-| DNS        | `respond`       | Optional `race`                                                                                                             |
-| DNS        | `route-options` | Requires at least one effective shared DNS option                                                                           |
-| DNS        | `predefined`    | Optional `rcode`, `answer`, `ns`, `extra`, and `race`                                                                       |
-| Both       | `reject`        | Optional `method` of `default` or `drop`, plus `no_drop`. Route also accepts `reply` for ICMP echo. DNS also accepts `race` |
-
-Route options include `override_address`, `override_port`, and the other fields defined by the pinned schema. Use these options with `route`, `bypass`, or `route-options`.
-
-Shared DNS options include `timeout`, `disable_cache`, `disable_optimistic_cache`, `rewrite_ttl`, `client_subnet`, and `remove_client_subnet`. For `route-options`, a positive timeout, a true flag, a valid subnet, or an explicit TTL counts as effective. A TTL of zero counts.
-
-## DNS response evaluation
-
-Place an `evaluate` rule before rules that depend on its response. Match a named response with `match_response: "tag"`, or an untagged response with `match_response: true`. With response matching active, a leaf can also test `response_rcode`, `response_answer`, `response_ns`, `response_extra`, `ip_cidr`, `ip_is_private`, or `ip_accept_any`.
-
-A `respond` rule can return a named response when its own default condition matches that tag. For a logical `respond` rule, use an untagged evaluation. Enable `race` only on a rule with active response matching and omit `speculative` on that rule.
-
-```ts
-import { compile, dns, dnsServer, Rule } from "./index";
-
-const resolver = dnsServer.udp({ tag: "resolver", server: "192.0.2.53" });
-const evaluate = dns.rule(Rule.match({ domain_suffix: "example.test" }), {
-  action: "evaluate",
-  server: resolver,
-  tag: "example-answer",
-});
-const respond = dns.rule(
-  Rule.match({ match_response: "example-answer", response_rcode: "NOERROR" }),
-  { action: "respond" },
-);
-
-compile({ dns: { servers: [resolver], rules: [evaluate, respond] } });
-```
-
-See the [configuration reference](configuration.md) for resource registration and TLS.
