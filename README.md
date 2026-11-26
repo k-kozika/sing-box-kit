@@ -15,7 +15,9 @@ console.log(JSON.stringify(config, null, 2));
 
 Generate JSON with `bun config.ts > config.json`.
 
-To run the example from a source checkout, run `bun install --frozen-lockfile` and use `./index` as the import path.
+On Node.js 22.1 or later, save the same example as `config.mjs` and run `node config.mjs > config.json`.
+
+To run the example from a source checkout, run `vp install --frozen-lockfile` and use `./index` as the import path.
 
 ## Documentation
 

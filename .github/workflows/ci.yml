@@ -11,15 +11,32 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
+      - uses: voidzero-dev/setup-vp@v1.22.0
         with:
-          bun-version: 1.4.5
-      - run: bun install --frozen-lockfile
+          node-version: "22"
+          run-install: false
+      - run: vp install --frozen-lockfile
       - run: bun run schema:generate
       - run: git diff --exit-code -- src/generated/sing-box.ts
-      - run: bun run typecheck
+      - run: vp check
       - run: bun test
-      - run: bun pm pack --dry-run
+      - name: Test the packed package on Node.js
+        run: |
+          vp pm pack --out "$RUNNER_TEMP/sing-box-kit.tgz"
+          node_path=$(node -p 'process.execPath')
+          bun_path=$(bun -p 'process.execPath')
+          consumer_dir=$(mktemp -d)
+          cd "$consumer_dir"
+          "$bun_path" add "$RUNNER_TEMP/sing-box-kit.tgz"
+          "$node_path" --input-type=module <<'EOF'
+          import assert from "node:assert/strict";
+          import { compile, outbound } from "sing-box-kit";
+
+          const direct = outbound.direct({ tag: "direct" });
+          assert.deepEqual(compile({ outbounds: [direct] }), {
+            outbounds: [{ type: "direct", tag: "direct" }],
+          });
+          EOF

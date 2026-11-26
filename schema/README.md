@@ -15,10 +15,10 @@ The upstream sing-box project is Copyright (C) 2022 by nekohasekai and publishes
 ## Regenerate the types
 
 ```sh
-bun install --frozen-lockfile
+vp install --frozen-lockfile
 bun run schema:generate
 git diff --exit-code -- src/generated/sing-box.ts
-bun run typecheck
+vp check
 bun test
 ```
 

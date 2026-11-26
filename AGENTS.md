@@ -1,11 +1,9 @@
-
-Default to using Bun instead of Node.js.
+Use Bun for TypeScript scripts and tests. Use Vite+ for library builds and static checks.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun check` instead of `tsc --noEmit`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `vp install --frozen-lockfile` to install the locked Bun dependencies.
+- Use `vp check` for formatting, lint, and type checks. Use `vp fmt` to apply formatting.
+- Use `vp pack` to build the JavaScript bundle and bundled type declarations.
 - Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
 - Use `bunx <package> <command>` instead of `npx <package> <command>`
 - Bun automatically loads .env, so don't use dotenv.
@@ -32,16 +30,9 @@ test("hello world", () => {
 });
 ```
 
-## Type checking
-
-Use `bun check` to type check the project. It reads `tsconfig.json` and reports the same errors as `tsc`.
-
-- `bun check src/index.ts` checks one file and what it imports
-- `bun --check src/index.ts`, `bun test --check` and `bun build --check` type check first, and do nothing else if there is an error
-
 ## Frontend
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+Use HTML imports with `Bun.serve()` for frontend entry points. HTML imports support React, CSS, and Tailwind.
 
 Server:
 
