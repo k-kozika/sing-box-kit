@@ -1,9 +1,8 @@
-import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
-import { pem } from "./crypto";
+import { pem, randomBytes } from "./crypto";
 
-function der(tag: number, ...parts: Uint8Array[]): Buffer {
+function der(tag: number, ...parts: Uint8Array[]): Buffer<ArrayBuffer> {
   const body = Buffer.concat(parts);
   if (body.length < 128) return Buffer.concat([Buffer.from([tag, body.length]), body]);
 
@@ -13,11 +12,11 @@ function der(tag: number, ...parts: Uint8Array[]): Buffer {
   return Buffer.concat([Buffer.from([tag, 0x80 | length.length]), length, body]);
 }
 
-function sequence(...parts: Uint8Array[]): Buffer {
+function sequence(...parts: Uint8Array[]): Buffer<ArrayBuffer> {
   return der(0x30, ...parts);
 }
 
-function time(date: Date): Buffer {
+function time(date: Date): Buffer<ArrayBuffer> {
   const year = date.getUTCFullYear();
   const utc = year >= 1950 && year < 2050;
   const value = date
@@ -27,7 +26,7 @@ function time(date: Date): Buffer {
   return der(utc ? 0x17 : 0x18, Buffer.from(`${value}Z`));
 }
 
-function ipAddress(name: string, version: number): Buffer {
+function ipAddress(name: string, version: number): Buffer<ArrayBuffer> {
   if (version === 4) return Buffer.from(name.split(".").map(Number));
 
   const canonical = new URL(`http://[${name}]`).hostname.slice(1, -1);
@@ -44,7 +43,7 @@ function ipAddress(name: string, version: number): Buffer {
   return bytes;
 }
 
-export function serverCertificate(serverName: string, months: number) {
+export async function serverCertificate(serverName: string, months: number) {
   if (!Number.isSafeInteger(months) || months < 1) {
     throw new RangeError("TLS validity must be a positive integer number of months");
   }
@@ -65,7 +64,17 @@ export function serverCertificate(serverName: string, months: number) {
     throw new TypeError("TLS server name must be a DNS name or IP address");
   }
 
-  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const { subtle } = globalThis.crypto;
+  const { privateKey, publicKey } = await subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
   const sha256WithRsa = Buffer.from("300d06092a864886f70d01010b0500", "hex");
   const name = sequence(
     der(
@@ -101,12 +110,12 @@ export function serverCertificate(serverName: string, months: number) {
     name,
     sequence(time(new Date(now.getTime() - 3_600_000)), time(expires)),
     name,
-    publicKey.export({ format: "der", type: "spki" }),
+    new Uint8Array(await subtle.exportKey("spki", publicKey)),
     extensions,
   );
-  const signature = sign("sha256", signed, privateKey);
+  const signature = new Uint8Array(await subtle.sign("RSASSA-PKCS1-v1_5", privateKey, signed));
   return {
-    privateKey: pem("PRIVATE KEY", privateKey.export({ format: "der", type: "pkcs8" })),
+    privateKey: pem("PRIVATE KEY", Buffer.from(await subtle.exportKey("pkcs8", privateKey))),
     certificate: pem(
       "CERTIFICATE",
       sequence(signed, sha256WithRsa, der(0x03, Buffer.from([0]), signature)),

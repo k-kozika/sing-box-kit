@@ -456,6 +456,8 @@ defaultSnell.client({ tag: "out", options: legacyObfs });
 v6Snell.client(profileAlice, { tag: "out", options: legacyObfs });
 
 const _randomBytes: Uint8Array = Random(32);
-const _publicKey: Uint8Array = x25519PublicKey(X25519KeyPair().privateKey);
+const _publicKey: Promise<Uint8Array> = X25519KeyPair().then(({ privateKey }) =>
+  x25519PublicKey(privateKey),
+);
 // @ts-expect-error X25519 accepts raw private-key bytes.
-x25519PublicKey("base64");
+void x25519PublicKey("base64");
