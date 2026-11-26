@@ -44,7 +44,7 @@ Route options include `override_address`, `override_port`, and the other fields 
 
 ## Match authenticated users
 
-A `User` represents a name shared across inbounds. Set protocol credentials in `user({ name, credentials })` and pass that object in `users` to an inbound factory. For example, use `credentials.socks.password` for SOCKS and `credentials.vless.uuid` with optional `flow` for VLESS.
+A `User` represents a name shared across inbounds. Set protocol credentials in `user({ name, credentials })` and pass that object in `users` to an inbound factory or [proxy profile](proxy-profiles.md). For example, use `credentials.socks.password` for SOCKS and `credentials.vless.uuid` with optional `flow` for VLESS.
 
 The inbound factories for SOCKS, Mixed, Shadowsocks, VLESS, HTTP, VMess, Trojan, Hysteria, Hysteria2, TUIC, ShadowTLS v3, Naive, AnyTLS, and Snell support `.authUser()` for configured users.
 

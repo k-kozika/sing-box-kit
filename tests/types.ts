@@ -8,6 +8,7 @@ import {
   inbound,
   networkNamespace,
   outbound,
+  proxyProfile,
   route,
   Rule,
   ruleSet,
@@ -340,3 +341,51 @@ compile({ dns: { bogus: false } });
 Rule.match({ network_interface_address: { cable: "192.0.2.0/24" } });
 // @ts-expect-error The OpenVPN server endpoint lacks preferred routes.
 Rule.match({ preferred_by: endpoint.openvpnServer({ tag: "server" }) });
+
+const profileAlice = user({ name: "alice", credentials: { vless: { uuid: "id" } } });
+const profileConnect = { host: "example.test", port: 443 };
+const profileServer = { tag: "in", listen: { port: 8443 } };
+const grpc = proxyProfile.vless({
+  connect: profileConnect,
+  users: [profileAlice],
+  transport: { type: "grpc", service_name: "proxy" },
+});
+const grpcInbound = grpc.server(profileServer);
+compile({
+  inbounds: [grpcInbound],
+  outbounds: [grpc.client(profileAlice, { tag: "grpc" })],
+  route: { rules: [route.rule(grpcInbound.authUser(profileAlice), { action: "reject" })] },
+});
+
+const managedProfile = proxyProfile.shadowsocks({
+  connect: profileConnect,
+  managed: true,
+  method: "aes-128-gcm",
+});
+const ssmInbound = managedProfile.server({ tag: "managed" }).listen({ port: 8388 });
+service.ssmApi({ servers: { "/": ssmInbound } });
+
+// @ts-expect-error Inbound tags identify generated resources.
+grpc.server();
+// @ts-expect-error Outbound tags identify generated resources.
+grpc.client(profileAlice, {});
+// @ts-expect-error Version belongs to the profile.
+grpc.server({ ...profileServer, version: 3 });
+// @ts-expect-error The helper owns the selected UUID.
+grpc.client(profileAlice, { tag: "client", options: { uuid: "other-id" } });
+// @ts-expect-error The helper owns the shared service name.
+grpc.client(profileAlice, { tag: "client", transport: { service_name: "other" } });
+// @ts-expect-error A static profile always needs a User selection.
+grpc.client({ tag: "client" });
+// @ts-expect-error QUIC requires regular TLS.
+proxyProfile.vmess({ connect: profileConnect, users: [profileAlice], transport: { type: "quic" } });
+proxyProfile.shadowtls({
+  version: 2,
+  connect: profileConnect,
+  serverName: "cover.test",
+  handshake: { server: "cover.test", server_port: 443 },
+  // @ts-expect-error ShadowTLS v2 uses a shared password.
+  users: [profileAlice],
+});
+// @ts-expect-error Snell profile v5 selects the compatible client v4 automatically.
+proxyProfile.snell({ connect: profileConnect, psk: "example-psk", version: 4 });

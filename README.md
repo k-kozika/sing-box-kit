@@ -34,6 +34,7 @@ To run the example from a source checkout, run `vp install --frozen-lockfile` an
 
 - [Build and validate a configuration](docs/configuration.md)
 - [Resource factories and registration](docs/resources.md)
+- [Generate server and client proxy configurations](docs/proxy-profiles.md)
 - [Listen, dial, resolver, and TLS settings](docs/settings.md)
 - [Routing rules and shared conditions](docs/rules.md)
 - [DNS rules and response evaluation](docs/dns-rules.md)

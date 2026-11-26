@@ -12,6 +12,7 @@ export {
   service,
 } from "./src/factories";
 export type { HeadlessRule, SingBoxConfig } from "./src/generated/sing-box";
+export { proxyProfile } from "./src/proxy-profile";
 export { dns, route, Rule } from "./src/rules";
 export type {
   Condition,
