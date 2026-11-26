@@ -31,9 +31,20 @@ jobs:
           fi
       - run: vp install --frozen-lockfile
       - run: bun run schema:generate
-      - run: git diff --exit-code -- src/generated/sing-box.ts
+      - run: git diff --exit-code -- src/generated
       - run: vp check
       - run: bun test
+      - name: Check representative configurations with pinned sing-box
+        run: |
+          version=$(bun -p 'require("./schema/version.json").version')
+          asset="sing-box-${version}-linux-amd64-glibc"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/SagerNet/sing-box/releases/download/v${version}/${asset}.tar.gz" \
+            --output "$RUNNER_TEMP/${asset}.tar.gz"
+          mkdir "$RUNNER_TEMP/sing-box-bin"
+          tar -xzf "$RUNNER_TEMP/${asset}.tar.gz" -C "$RUNNER_TEMP/sing-box-bin" \
+            --strip-components=1 --wildcards '*/sing-box'
+          SING_BOX="$RUNNER_TEMP/sing-box-bin/sing-box" bun tests/sing-box-check.ts
       - name: Test the packed package on Node.js
         run: |
           vp pm pack --out "$RUNNER_TEMP/sing-box-kit.tgz"
@@ -44,11 +55,20 @@ jobs:
           "$bun_path" add "$RUNNER_TEMP/sing-box-kit.tgz"
           "$node_path" --input-type=module <<'EOF'
           import assert from "node:assert/strict";
-          import { compile, outbound } from "sing-box-kit";
+          import { compile, endpoint, outbound, service, validateConfig } from "sing-box-kit";
 
           const direct = outbound.direct({ tag: "direct" });
           assert.deepEqual(compile({ outbounds: [direct] }), {
             outbounds: [{ type: "direct", tag: "direct" }],
+          });
+
+          const tailscale = endpoint.tailscale({ tag: "tail", advertise_exit_node: true });
+          const usbip = service.usbipServer({ provider: "dynamic" }).listen({ port: 0 });
+          const config = compile({ endpoints: [tailscale], services: [usbip] });
+          assert.equal(validateConfig(config), config);
+          assert.deepEqual(config, {
+            endpoints: [{ type: "tailscale", tag: "tail", advertise_exit_node: true }],
+            services: [{ type: "usbip-server", provider: "dynamic", listen_port: 0 }],
           });
           EOF
       - uses: actions/upload-artifact@v7

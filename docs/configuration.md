@@ -4,17 +4,21 @@ Create resources with the factories exported from the project root. Pass type-sp
 
 ## Factories and registration
 
-| Factories                                                                                             | Register in             |
-| ----------------------------------------------------------------------------------------------------- | ----------------------- |
-| `inbound.mixed()`, `inbound.socks()`, `inbound.shadowsocks()`, `inbound.vless()`                      | `inbounds`              |
-| `outbound.direct()`, `outbound.vless()`, `outbound.selector()`, `outbound.urltest()`                  | `outbounds`             |
-| `endpoint.tailscale()`, `endpoint.wireguard()`                                                        | `endpoints`             |
-| `service.api()`, `service.ssmApi()`                                                                   | `services`              |
-| Tagged `httpClient()`                                                                                 | `http_clients`          |
-| `dnsServer.tcp()`, `dnsServer.udp()`, `dnsServer.tls()`, `dnsServer.https()`, `dnsServer.tailscale()` | `dns.servers`           |
-| `ruleSet.inline()`, `ruleSet.local()`, `ruleSet.remote()`                                             | `route.rule_set`        |
-| `certificateProvider.tailscale()`                                                                     | `certificate_providers` |
-| `networkNamespace.default()`, `networkNamespace.unshare()`                                            | `network_namespaces`    |
+The pinned sing-box v1.14.4 schema contains 77 kinds with a `type` discriminator. The package also exports a standalone `httpClient()` factory.
+
+| Package export        | Factory methods                                                                                                                                                                                        | Register in             |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| `inbound`             | `anytls`, `cloudflared`, `direct`, `http`, `hysteria`, `hysteria2`, `mixed`, `naive`, `redirect`, `shadowsocks`, `shadowtls`, `snell`, `socks`, `tproxy`, `trojan`, `tuic`, `tun`, `vless`, `vmess`    | `inbounds`              |
+| `outbound`            | `anytls`, `block`, `bridge`, `direct`, `http`, `hysteria`, `hysteria2`, `naive`, `selector`, `shadowsocks`, `shadowtls`, `snell`, `socks`, `ssh`, `tor`, `trojan`, `tuic`, `urltest`, `vless`, `vmess` | `outbounds`             |
+| `endpoint`            | `openconnect`, `openvpnClient`, `openvpnServer`, `tailscale`, `wireguard`                                                                                                                              | `endpoints`             |
+| `service`             | `api`, `ccm`, `derp`, `hysteriaRealm`, `ocm`, `oomKiller`, `resolved`, `ssmApi`, `usbipClient`, `usbipServer`                                                                                          | `services`              |
+| `dnsServer`           | `dhcp`, `fakeip`, `h3`, `hosts`, `https`, `local`, `mdns`, `openconnect`, `openvpn`, `quic`, `resolved`, `tailscale`, `tcp`, `tls`, `udp`                                                              | `dns.servers`           |
+| `ruleSet`             | `inline`, `local`, `remote`                                                                                                                                                                            | `route.rule_set`        |
+| `certificateProvider` | `acme`, `cloudflareOriginCa`, `tailscale`                                                                                                                                                              | `certificate_providers` |
+| `networkNamespace`    | `default`, `unshare`                                                                                                                                                                                   | `network_namespaces`    |
+| `httpClient()`        | Call directly. Supply a tag to register it.                                                                                                                                                            | `http_clients`          |
+
+Snell inbounds take `version: 5` or `6`. Snell outbounds take `version: 4` or `6`. The version selects which options you can supply. USB/IP Server accepts `devices` with the default provider, written as `provider: "default"`, `provider: ""`, or by omitting `provider`. Supply `provider: "dynamic"` to select the dynamic provider.
 
 Builder methods return new values. Register and reference the same final value after applying the settings. If you rebuild a resource with the same tag, rebuild any references to it. Apply each settings method at most once per chain.
 
@@ -24,18 +28,46 @@ Use `validateConfig(value)` to check an existing JSON configuration against the 
 
 ## Shared settings
 
-- `.listen(address, { port })` emits `listen` and `listen_port`. To forward traffic from an inbound, pass a compatible regular inbound as `detour`. Tailscale and WireGuard endpoints can match inbound rule conditions and serve as egress.
-- `.dial(options)` accepts `connect_timeout`, `domain_resolver`, and `netns`. On dialers that accept `detour`, supply an outbound or endpoint. Put any non-zero timeout or namespace setting on the detour target. An otherwise empty direct outbound cannot be used as an explicit dial detour. WireGuard also disallows a non-zero `listen_port` with a dial detour.
+Each builder exposes the shared methods and fields available for its kind in the pinned schema.
+
+- `.listen(address, { port, ...options })` writes `listen` and `listen_port`. Omit the port, omit the address with `.listen({ port, ...options })`, or pass `undefined` for the address. A listen `detour` takes a registered inbound. TUN can use `.listen({ netns, udp_timeout })`.
+- `.dial(options)` accepts the supported Dial Fields. On dialers with `detour`, supply a registered outbound or endpoint. Put any non-zero connection timeout or namespace setting on the detour target. An otherwise empty direct outbound cannot be used as an explicit dial detour. WireGuard also disallows a non-zero `listen_port` with a dial detour.
 - In Listen and Dial Fields, a typed `netns` value resolves to a registered namespace tag. A string passes through as supplied. sing-box looks for a registered tag before treating it as an OS name or path.
-- Supply a DNS server to `domain_resolver` or `route.default_domain_resolver` directly or as `{ server: resolver, ...options }`. A TCP, UDP, TLS, or HTTPS DNS server configured with a hostname needs its own resolver or an explicit detour.
+- Supply a DNS server to `domain_resolver` or `route.default_domain_resolver` directly or as `{ server: resolver, ...options }`. A TCP, UDP, TLS, HTTPS, HTTP/3, or QUIC DNS server configured with a hostname needs its own resolver or an explicit detour.
+
+```ts
+import { compile, endpoint, inbound, outbound } from "sing-box-kit";
+
+const mixed = inbound.mixed({ tag: "mixed" }).listen("127.0.0.1", { port: 1080, reuse_addr: true });
+const tailscale = endpoint.tailscale({ tag: "tail", advertise_exit_node: true });
+const direct = outbound.direct({ tag: "direct" }).dial({ bind_interface: "eth0" });
+
+compile({
+  inbounds: [mixed],
+  endpoints: [tailscale],
+  outbounds: [direct],
+  dns: { strategy: "prefer_ipv4" },
+  route: { final: direct },
+});
+```
+
+Set DNS and route options directly under `dns` and `route` in `compile()`. Pass `$schema`, `log`, `ntp`, `certificate`, and `experimental` at the root. The compiler preserves JSON field names and explicit values such as `false`, `0`, and empty arrays.
 
 ## TLS profiles
 
-On supported builders, `.tls(profile)` enables TLS. Use `side: "server"` with a `certificate_path` and `key_path` pair or a registered `certificate_provider`. Use `side: "client"` with optional `server_name` and `certificate_path` settings.
+Use `.tls(options)` for the kind's TLS fields, such as `outbound.http({ tag: "proxy" }).tls({ server_name: "proxy.example", alpn: ["h2"] })`. For configurations with an `enabled` field the builder defaults it to `true` and preserves an explicit `false`. OpenConnect and OpenVPN take their own TLS options.
+
+Standard inbound and outbound TLS builders also accept side-tagged profiles. Use `side: "server"` with a `certificate_path` and `key_path` pair or a registered `certificate_provider`. Use `side: "client"` with optional `server_name` and `certificate_path` settings.
 
 VLESS also supports REALITY on both sides. On the inbound, set `server_name` and pass `reality: { private_key, short_id, handshake }`. The handshake has its own `server`, `server_port`, and optional Dial Fields. On the outbound, set the VLESS `server` and `server_port` for the connection, set the TLS `server_name` for verification, and pass `reality: { public_key, short_id }`. The Kit enables uTLS for that client profile.
 
 REALITY keys are unpadded Base64url strings for 32-byte keys. Short IDs are even-length hexadecimal strings of up to 16 characters, including the empty string. The inbound accepts a string or an array of strings. Keep the private key in the server configuration and share the public key and a selected short ID with the client.
+
+VLESS builders take `transport` and `multiplex` in the factory options.
+
+## Typed references
+
+Pass the final registered resource wherever the Kit expects a reference. This includes references inside objects, maps, and arrays. OpenConnect DNS takes an `endpoint.openconnect()` value, OpenVPN DNS takes an `endpoint.openvpnClient()` value, and Resolved DNS takes a tagged `service.resolved()` value. DERP accepts a Tailscale endpoint or an array of those endpoints in `verify_client_endpoint`.
 
 ## HTTP clients and services
 

@@ -61,23 +61,29 @@ export interface SchemaNode {
   const?: unknown;
   enum?: readonly unknown[];
   properties?: SchemaFields;
+  required?: readonly string[];
+  items?: SchemaNode;
+  propertyNames?: SchemaNode;
+  additionalProperties?: SchemaNode | boolean;
   oneOf?: readonly SchemaNode[];
   anyOf?: readonly SchemaNode[];
+  "x-tag-reference"?: string;
 }
 
 const definitions = official.$defs as unknown as Record<string, SchemaNode>;
+export const rootProperties = official.properties as SchemaFields;
 export function definition(name: string): SchemaNode {
   return definitions[name] ?? fail(name, "unknown schema definition");
 }
 
-export function variant(name: string, type: string): SchemaNode {
-  const schema = definition(name);
-  return (
-    (schema.oneOf ?? schema.anyOf)?.find(
-      (option) =>
-        option.properties?.type?.const === type || option.properties?.type?.enum?.includes(type),
-    ) ?? fail(name, "unknown schema variant")
-  );
+export function definitionName(schema: SchemaNode): string | undefined {
+  return schema.$ref?.slice("#/$defs/".length);
+}
+
+export function schemaBranches(schema: SchemaNode): SchemaNode[] {
+  const name = definitionName(schema);
+  if (name) return schemaBranches(definition(name));
+  return (schema.oneOf ?? schema.anyOf)?.flatMap(schemaBranches) ?? [schema];
 }
 
 export function compileSchema(schema: AnySchema): ValidateFunction {
@@ -86,13 +92,6 @@ export function compileSchema(schema: AnySchema): ValidateFunction {
       ? official.$id + value
       : value;
   return ajv.compile(JSON.parse(JSON.stringify(schema, rewriteReferences)));
-}
-
-export function objectValidator(
-  properties: SchemaFields,
-  required: readonly string[] = [],
-): ValidateFunction {
-  return compileSchema({ type: "object", properties, required, additionalProperties: false });
 }
 
 export function pickSchema(properties: SchemaFields, keys: readonly string[]): SchemaFields {
@@ -158,14 +157,7 @@ export const tlsProfileValidators = {
             handshake: {
               type: "object",
               additionalProperties: false,
-              properties: pickSchema(definition("InboundRealityHandshakeOptions").properties!, [
-                "server",
-                "server_port",
-                "connect_timeout",
-                "detour",
-                "domain_resolver",
-                "netns",
-              ]),
+              properties: definition("InboundRealityHandshakeOptions").properties!,
               required: ["server", "server_port"],
             },
           },

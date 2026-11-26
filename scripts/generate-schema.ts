@@ -1,7 +1,160 @@
 import { compile } from "json-schema-to-typescript";
+import type { JSONSchema } from "json-schema-to-typescript";
+import {
+  factoryCatalog,
+  inputDefinition,
+  inputProperty,
+  rootSettings,
+  ruleActionSchemas,
+  ruleMatchSchema,
+  schemaShape,
+  sectionSettings,
+  tagReference,
+  targetSchema,
+} from "../src/input-schema";
+import type { Target } from "../src/resource";
+import { definitionName } from "../src/schema";
+import type { SchemaNode } from "../src/schema";
 
 const schema = await Bun.file(new URL("../schema/sing-box.json", import.meta.url)).json();
 const types = await compile({ ...schema, title: "SingBoxConfig" }, "SingBoxConfig", {
   additionalProperties: false,
 });
 await Bun.write(new URL("../src/generated/sing-box.ts", import.meta.url), types);
+
+const definitions: Record<string, unknown> = {};
+const imports = new Set<string>();
+const projections = new Map<string, string>();
+
+function typedReference(reference: string): { tsType: string } {
+  const entry = tagReference(reference);
+  const type = entry.type;
+  imports.add(type);
+  return { tsType: "allowString" in entry ? `${type} | string` : type };
+}
+
+function transform(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(transform);
+  if (!value || typeof value !== "object") return value;
+  const node = value as SchemaNode;
+  const annotation = node["x-tag-reference"];
+  if (typeof annotation === "string") return typedReference(annotation);
+  if (node.propertyNames && typeof node.additionalProperties === "object") {
+    const keys = schemaShape(node.propertyNames).enum;
+    if (keys?.every((key) => typeof key === "string")) {
+      const field = transform(node.additionalProperties);
+      return {
+        type: "object",
+        properties: Object.fromEntries(keys.map((key) => [key, field])),
+        additionalProperties: false,
+      };
+    }
+  }
+  const name = definitionName(node);
+  if (name) {
+    if (!Object.hasOwn(definitions, name)) {
+      definitions[name] = {};
+      definitions[name] = transform(inputDefinition(name));
+    }
+    return node;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      key === "properties"
+        ? Object.fromEntries(
+            Object.entries(node.properties!).map(([property, schema]) => [
+              property,
+              transform(inputProperty(property, schema)),
+            ]),
+          )
+        : transform(item),
+    ]),
+  );
+}
+
+function object(properties: Record<string, unknown>) {
+  return {
+    type: "object",
+    properties,
+    required: Object.keys(properties),
+    additionalProperties: false,
+  };
+}
+
+function projection(name: string, schema: SchemaNode) {
+  const key = JSON.stringify(schema);
+  let definition = projections.get(key);
+  if (!definition) {
+    projections.set(key, name);
+    definitions[name] = transform(schema);
+    definition = name;
+  }
+  return { $ref: `#/$defs/${definition}` };
+}
+
+function factoryTypes(target: Target) {
+  return object(
+    Object.fromEntries(
+      Array.from(factoryCatalog(target), ([kind, branches]) => {
+        const name =
+          targetSchema[target] +
+          kind
+            .split("-")
+            .map((word) => word[0]!.toUpperCase() + word.slice(1))
+            .join("");
+        const first = branches[0]!;
+        const groups: Record<string, unknown> = {
+          options: projection(
+            `${name}Options`,
+            branches.length > 1
+              ? { oneOf: branches.map((branch) => branch.options) }
+              : first.options,
+          ),
+        };
+        for (const group of ["listen", "dial", "tls"] as const) {
+          const settings = first[group];
+          if (settings)
+            groups[group] = definitionName(settings)
+              ? transform(settings)
+              : projection(`${name}${group[0]!.toUpperCase()}${group.slice(1)}`, settings);
+        }
+        return [kind, object(groups)];
+      }),
+    ),
+  );
+}
+
+const factories = Object.fromEntries(
+  (Object.keys(targetSchema) as Target[]).map((target) => [target, factoryTypes(target)]),
+);
+const kit = {
+  ...object({
+    factories: object(factories),
+    root: object(
+      Object.fromEntries(
+        Object.entries(rootSettings).map(([key, value]) => [key, transform(value)]),
+      ),
+    ),
+    sections: object({
+      route: projection("RouteSettings", sectionSettings.route),
+      dns: projection("DnsSettings", sectionSettings.dns),
+    }),
+    matches: object({
+      route: projection("RouteMatchFields", ruleMatchSchema.route),
+      dns: projection("DnsMatchFields", ruleMatchSchema.dns),
+    }),
+    actions: object({
+      route: projection("RouteActionInput", { oneOf: [...ruleActionSchemas("route").values()] }),
+      dns: projection("DnsActionInput", { oneOf: [...ruleActionSchemas("dns").values()] }),
+    }),
+  }),
+  $defs: definitions,
+} as JSONSchema;
+
+const kitTypes = await compile(kit, "KitInputs", {
+  additionalProperties: false,
+  bannerComment: `/* Generated by scripts/generate-schema.ts. */
+import type { ${[...imports].sort().join(", ")} } from "../resource";`,
+});
+await Bun.write(new URL("../src/generated/kit-inputs.ts", import.meta.url), kitTypes);

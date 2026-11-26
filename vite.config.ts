@@ -7,10 +7,10 @@ export default defineConfig({
     dts: true,
   },
   fmt: {
-    ignorePatterns: ["dist/**", "schema/sing-box.json", "src/generated/sing-box.ts"],
+    ignorePatterns: ["dist/**", "schema/sing-box.json", "src/generated/**"],
   },
   lint: {
-    ignorePatterns: ["dist/**", "src/generated/sing-box.ts"],
+    ignorePatterns: ["dist/**", "src/generated/**"],
     options: { typeAware: true, typeCheck: true },
   },
 });

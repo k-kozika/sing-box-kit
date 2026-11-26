@@ -146,7 +146,6 @@ compile({
 });
 // @ts-expect-error Endpoint detours are outbound-only.
 mixed.listen("127.0.0.1", { port: 1080, detour: ts });
-// @ts-expect-error The service listener has no detour.
 service.api().listen("127.0.0.1", { port: 9090, detour: mixed });
 // @ts-expect-error The provider requires a Tailscale endpoint.
 certificateProvider.tailscale({ tag: "cert", endpoint: wg });
@@ -238,3 +237,89 @@ const mixedTlsProfile = {
 } as const;
 // @ts-expect-error Certificate files cannot be mixed with REALITY.
 vlessIn.tls(mixedTlsProfile);
+
+const openconnect = endpoint.openconnect({ tag: "oc" }).tls({ insecure: false });
+const openvpn = endpoint.openvpnClient({ tag: "ovpn" }).tls({ server_name: "vpn.example.test" });
+const resolved = service.resolved({ tag: "resolved" }).listen({ reuse_addr: true });
+const derp = service.derp({ verify_client_endpoint: [ts], stun: { detour: mixed } });
+compile({
+  endpoints: [openconnect, openvpn, ts],
+  services: [resolved, derp],
+  inbounds: [mixed.listen(undefined, { port: 0 })],
+  dns: {
+    servers: [
+      dnsServer.openconnect({ tag: "oc-dns", endpoint: openconnect }),
+      dnsServer.openvpn({ tag: "ovpn-dns", endpoint: openvpn }),
+      dnsServer.resolved({ tag: "resolved-dns", service: resolved }),
+    ],
+    strategy: "ipv4_only",
+  },
+  route: {
+    rules: [
+      route.rule(Rule.match({ network: ["icmp"], ip_cidr: "192.0.2.0/24" }), {
+        action: "reject",
+        method: "reply",
+      }),
+      route.rule({ action: "route-options", override_address: "192.0.2.1", override_port: 0 }),
+      route.rule({ action: "resolve", server: udp }),
+    ],
+  },
+  ntp: { detour: direct, enabled: false },
+  certificate: { store: "none", certificate: [] },
+});
+inbound.snell({ tag: "snell-v5", version: 5, obfs_mode: "http" });
+inbound.snell({ tag: "snell-v6", version: 6, mode: "default" });
+outbound.snell({ tag: "snell-v4", version: 4, reuse: true, obfs_host: "example.test" });
+outbound.snell({ tag: "snell-v6", version: 6, mode: "default" });
+service.usbipServer({ devices: [] });
+service.usbipServer({ provider: "dynamic" });
+// @ts-expect-error Snell requires an explicit version.
+inbound.snell({ tag: "snell" });
+// @ts-expect-error This version belongs to an outbound.
+inbound.snell({ tag: "snell", version: 4 });
+// @ts-expect-error Mode is a version 6 option, even when passed through a variable.
+inbound.snell({ tag: "snell", version: 5, mode: "default" } as const);
+// @ts-expect-error Obfuscation is a version 4 outbound option.
+outbound.snell({ tag: "snell", version: 6, obfs_mode: "tls" });
+// @ts-expect-error Dynamic USB/IP cannot specify devices.
+service.usbipServer({ provider: "dynamic", devices: [] } as const);
+// @ts-expect-error USB/IP provider values are schema discriminators.
+service.usbipServer({ provider: "unknown" });
+// @ts-expect-error Unknown type-specific fields are rejected.
+endpoint.wireguard({ tag: "wg", address: [], private_key: "x", packet_size: 1420 });
+// @ts-expect-error Shared Listen Fields belong to the listener's schema.
+resolved.listen({ connect_timeout: "1s" });
+// @ts-expect-error OpenVPN TLS options lack the enabled field.
+openvpn.tls({ enabled: true });
+// @ts-expect-error A DERP verification endpoint must be Tailscale.
+service.derp({ verify_client_endpoint: [openconnect] });
+// @ts-expect-error A nested listen detour requires an inbound, rather than an endpoint.
+service.derp({ stun: { detour: ts } });
+// @ts-expect-error OpenConnect DNS takes an OpenConnect endpoint.
+dnsServer.openconnect({ tag: "bad", endpoint: openvpn });
+// @ts-expect-error OpenVPN DNS takes a client endpoint.
+dnsServer.openvpn({ tag: "bad", endpoint: endpoint.openvpnServer({ tag: "server" }) });
+// @ts-expect-error Resolved DNS takes a tagged Resolved service.
+dnsServer.resolved({ tag: "bad", service: service.resolved() });
+// @ts-expect-error A nested dial detour requires an egress.
+certificateProvider.acme({ tag: "bad", http_client: { detour: mixed } });
+// @ts-expect-error ICMP is a route condition.
+dns.rule(Rule.match({ network: "icmp" }), { action: "reject" });
+// @ts-expect-error Without response matching, ip_cidr is a route condition.
+dns.rule(Rule.match({ ip_cidr: "192.0.2.0/24" }), { action: "reject" });
+// @ts-expect-error A DNS response condition cannot be applied to a route.
+route.rule(Rule.match({ match_response: true, ip_cidr: "192.0.2.0/24" }), { action: "reject" });
+// @ts-expect-error These match fields have disjoint scopes.
+Rule.match({ query_type: "A", network: "icmp" });
+// @ts-expect-error DNS reject has no ICMP reply method.
+dns.rule({ action: "reject", method: "reply" });
+// @ts-expect-error Route resolve uses a typed DNS server.
+route.rule({ action: "resolve", server: direct });
+// @ts-expect-error Destination overrides only apply to route actions.
+dns.rule({ action: "route", server: udp, override_port: 0 });
+// @ts-expect-error DNS settings are limited to the pinned schema.
+compile({ dns: { bogus: false } });
+// @ts-expect-error Interface-address map keys are limited to the schema's interface types.
+Rule.match({ network_interface_address: { cable: "192.0.2.0/24" } });
+// @ts-expect-error The OpenVPN server endpoint lacks preferred routes.
+Rule.match({ preferred_by: endpoint.openvpnServer({ tag: "server" }) });

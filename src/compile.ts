@@ -1,11 +1,10 @@
 import { isIP } from "node:net";
+import type { KitInputs } from "./generated/kit-inputs";
+import { rootSettings, sectionSettings } from "./input-schema";
 import type { SingBoxConfig } from "./generated/sing-box";
-import { copyJson, expandFields, fieldsFrom, ref, resourceData } from "./resource";
+import { copyJson, fieldsFrom, resourceData } from "./resource";
 import type {
   DnsServer,
-  Egress,
-  Fields,
-  ReadonlyJson,
   Resolve,
   Resource,
   ResourceData,
@@ -15,12 +14,10 @@ import type {
 import { checkDnsRules, expandRule } from "./rules";
 import type { RuleValue } from "./rules";
 import { fail, validateConfig } from "./schema";
-import { expandResolver, isEmptyDirect } from "./settings";
-import type { DomainResolver } from "./settings";
+import { expandInput, isEmptyDirect } from "./settings";
+import type { Fields, ReadonlyJson } from "./type-utils";
 
-export interface CompileInput {
-  readonly log?: ReadonlyJson<NonNullable<SingBoxConfig["log"]>>;
-  readonly experimental?: ReadonlyJson<NonNullable<SingBoxConfig["experimental"]>>;
+export interface CompileInput extends Partial<ReadonlyJson<KitInputs["root"]>> {
   readonly inbounds?: readonly Resource<"inbounds">[];
   readonly outbounds?: readonly Resource<"outbounds">[];
   readonly endpoints?: readonly Resource<"endpoints">[];
@@ -31,15 +28,11 @@ export interface CompileInput {
   readonly route?: {
     readonly rules?: readonly RuleValue<"route">[];
     readonly rule_set?: readonly Resource<"route.rule_set">[];
-    readonly final?: Egress;
-    readonly default_domain_resolver?: DomainResolver;
-    readonly default_http_client?: TaggedHttpClient;
-  };
+  } & ReadonlyJson<KitInputs["sections"]["route"]>;
   readonly dns?: {
     readonly rules?: readonly RuleValue<"dns">[];
     readonly servers?: readonly DnsServer[];
-    readonly final?: DnsServer;
-  };
+  } & ReadonlyJson<KitInputs["sections"]["dns"]>;
 }
 
 type TopLevelTarget = Exclude<Target, "dns.servers" | "route.rule_set">;
@@ -52,14 +45,8 @@ const topLevelLists = [
   "certificate_providers",
   "network_namespaces",
 ] as const satisfies readonly TopLevelTarget[];
-const routeKeys = [
-  "rules",
-  "rule_set",
-  "final",
-  "default_domain_resolver",
-  "default_http_client",
-] as const;
-const dnsKeys = ["rules", "servers", "final"] as const;
+const routeKeys = ["rules", "rule_set", ...Object.keys(sectionSettings.route.properties!)];
+const dnsKeys = ["rules", "servers", ...Object.keys(sectionSettings.dns.properties!)];
 
 interface Registered {
   readonly value: Resource;
@@ -108,8 +95,7 @@ function checkCycles(resources: Iterable<Registered>): void {
  */
 export function compile(input: CompileInput): SingBoxConfig {
   const fields = fieldsFrom(input, "config", [
-    "log",
-    "experimental",
+    ...Object.keys(rootSettings),
     ...topLevelLists,
     "route",
     "dns",
@@ -220,53 +206,43 @@ export function compile(input: CompileInput): SingBoxConfig {
       ) {
         fail(`${path}.domain_resolver`, "hostname requires a per-server resolver or detour");
       }
-      return expandFields(data.fields, data.references ?? {}, path, resolveFrom(entry));
+      const expand = data.expand ?? copyJson;
+      return expand(data.fields, path, resolveFrom(entry)) as Fields;
     });
   }
 
   const resolve = resolveFrom();
   const output: Fields = {};
-  for (const key of ["log", "experimental"] as const) {
-    if (fields[key] !== undefined) output[key] = copyJson(fields[key], key);
+  for (const [key, schema] of Object.entries(rootSettings)) {
+    if (fields[key] !== undefined) output[key] = expandInput(schema, fields[key], key, resolve);
   }
   for (const target of topLevelLists) {
     const values = emitList(target);
     if (values !== undefined) output[target] = values;
   }
   if (route) {
-    output.route = expandFields(
-      route,
-      {
-        rule_set: () => emitList("route.rule_set"),
-        final: ref("egress"),
-        default_domain_resolver: expandResolver,
-        default_http_client: ref("http-client"),
-        rules: (values, path) =>
-          array(values, path).map((value, index) =>
-            expandRule(value, "route", `${path}[${index}]`, resolve),
-          ),
-      },
-      "route",
-      resolve,
-    );
+    const { rules, rule_set, ...settings } = route;
+    const result = expandInput(sectionSettings.route, settings, "route", resolve) as Fields;
+    if (rule_set !== undefined) result.rule_set = emitList("route.rule_set");
+    if (rules !== undefined) {
+      result.rules = array(rules, "route.rules").map((value, index) =>
+        expandRule(value, "route", `route.rules[${index}]`, resolve),
+      );
+    }
+    output.route = result;
   }
   if (dns) {
-    output.dns = expandFields(
-      dns,
-      {
-        servers: () => emitList("dns.servers"),
-        final: ref("dns-server"),
-        rules: (values, path) => {
-          const rules = array(values, path).map((value, index) =>
-            expandRule(value, "dns", `${path}[${index}]`, resolve),
-          );
-          checkDnsRules(rules, path);
-          return rules;
-        },
-      },
-      "dns",
-      resolve,
-    );
+    const { rules, servers, ...settings } = dns;
+    const result = expandInput(sectionSettings.dns, settings, "dns", resolve) as Fields;
+    if (servers !== undefined) result.servers = emitList("dns.servers");
+    if (rules !== undefined) {
+      const compiled = array(rules, "dns.rules").map((value, index) =>
+        expandRule(value, "dns", `dns.rules[${index}]`, resolve),
+      );
+      checkDnsRules(compiled, "dns.rules");
+      result.rules = compiled;
+    }
+    output.dns = result;
   }
   checkCycles(registrations.values());
   return validateConfig(output);

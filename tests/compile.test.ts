@@ -18,7 +18,8 @@ import {
 } from "../index";
 import type { CompileInput, DnsRuleAction, MatchFields, RouteRuleAction } from "../index";
 import { createResource, resourceData } from "../src/resource";
-import type { DnsServer, Fields, Resource } from "../src/resource";
+import type { DnsServer, Resource } from "../src/resource";
+import type { Fields } from "../src/type-utils";
 import type { Dial, HttpClientInput, InboundListener, RealityServerTls } from "../src/settings";
 
 const address = "127.0.0.1";
@@ -910,7 +911,9 @@ describe("Phase 2 logical rules", () => {
     expect(() => Rule.match({ domain: [], port: [] })).toThrow("condition has no active fields");
     expect(() => Rule.match({ match_response: false })).toThrow("condition has no active fields");
     expect(() => Rule.match({ match_response: "" })).toThrow("match_response");
-    expect(() => Rule.match({ response_rcode: 0 })).toThrow("match_response");
+    expect(() => Rule.match({ response_rcode: 0 } as unknown as MatchFields)).toThrow(
+      "match_response",
+    );
     expect(() => routeOnly.and(dnsOnly as unknown as typeof routeOnly)).toThrow("common scope");
     expect(() => route.rule(dnsOnly as unknown as typeof routeOnly, { action: "reject" })).toThrow(
       "scope",

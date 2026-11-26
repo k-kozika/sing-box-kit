@@ -1,71 +1,36 @@
-import type {
-  CertificateProvider as RawProvider,
-  DNSServer as RawDnsServer,
-  Endpoint as RawEndpoint,
-  HeadlessRule,
-  HTTPClient,
-  Inbound as RawInbound,
-  NetworkNamespace as RawNamespace,
-  Outbound as RawOutbound,
-  RuleSet as RawRuleSet,
-  Service as RawService,
-  ShadowsocksUser,
-  User as RawUser,
-  VLESSUser,
-} from "./generated/sing-box";
+import type { KitInputs } from "./generated/kit-inputs";
+import type { ShadowsocksUser, User as RawUser, VLESSUser } from "./generated/sing-box";
+import { factoryCatalog, factoryName } from "./input-schema";
+import type { FactoryBranch } from "./input-schema";
 import {
-  arrayOrOne,
   createResource,
-  expandFields,
   fieldsFrom,
+  preferredDnsKinds,
+  preferredRouteEndpoints,
   record,
-  ref,
   resourceData,
   snapshot,
 } from "./resource";
-import type {
-  Egress,
-  Expansions,
-  Fields,
-  ReadonlyJson,
-  Resource,
-  Role,
-  SsmInbound,
-  TailscaleEndpoint,
-  Target,
-} from "./resource";
+import type { Resource, Role, SsmInbound, Target } from "./resource";
 import { Rule } from "./rules";
 import type { Condition } from "./rules";
-import { checkSchema, compileSchema, definition, fail, keyPath, variant } from "./schema";
+import { checkSchema, compileSchema, definitionName, fail, keyPath } from "./schema";
 import {
-  dialFields,
-  dialReferences,
-  expandDashboard,
-  expandHttpClient,
-  expandSsmServers,
-  expandTls,
+  checkSsmServers,
+  expandInput,
   listenFields,
-  listenReferences,
+  matchesDiscriminators,
   previewReference,
   tlsFields,
 } from "./settings";
-import type {
-  ClientTls,
-  Dial,
-  DirectDial,
-  HttpClientInput,
-  InboundListener,
-  Listener,
-  RealityClientTls,
-  RealityServerTls,
-  ServerTls,
-  TlsMode,
-} from "./settings";
+import type { ClientTls, RealityClientTls, RealityServerTls, ServerTls, TlsMode } from "./settings";
+import type { CamelCase, Fields, ReadonlyJson, StrictUnion } from "./type-utils";
 import { isUser } from "./user";
 import type { User } from "./user";
 
 interface ListenMethod<T> {
-  listen(address: string, options: T): this;
+  listen(options?: T): this;
+  listen(address?: "port" extends keyof T ? string : undefined, options?: T): this;
 }
 interface DialMethod<T> {
   dial(options: T): this;
@@ -77,17 +42,6 @@ interface AuthMethod {
   authUser(user: User): Condition;
 }
 
-const targetSchema = {
-  inbounds: "Inbound",
-  outbounds: "Outbound",
-  endpoints: "Endpoint",
-  services: "Service",
-  http_clients: "HTTPClient",
-  "dns.servers": "DNSServer",
-  "route.rule_set": "RuleSet",
-  certificate_providers: "CertificateProvider",
-  network_namespaces: "NetworkNamespace",
-} as const satisfies Record<Target, string>;
 const targetRoles = {
   inbounds: ["inbound", "listen-detour"],
   outbounds: ["egress"],
@@ -99,6 +53,12 @@ const targetRoles = {
   certificate_providers: ["certificate-provider"],
   network_namespaces: ["netns"],
 } as const satisfies Record<Target, readonly Role[]>;
+
+const endpointRoles = {
+  tailscale: "tailscale-endpoint",
+  openconnect: "openconnect-endpoint",
+  "openvpn-client": "openvpn-client-endpoint",
+} as const satisfies Record<string, Role>;
 
 type PasswordEntry<Name extends "username" | "name"> = {
   readonly user: User;
@@ -116,90 +76,71 @@ interface AuthOptions {
   readonly allowRaw?: boolean;
 }
 
-interface Definition {
-  readonly target: Target;
-  readonly kind: string;
-  readonly required: readonly string[];
-  readonly optional?: readonly string[];
-  readonly listen?: "listener" | "forwarding";
-  readonly dial?: "direct" | "detour";
-  readonly tls?: TlsMode;
-  readonly auth?: AuthOptions;
-  readonly roles?: readonly Role[];
-  readonly references?: Expansions;
-  readonly remoteDns?: boolean;
-  readonly startupDetour?: boolean;
-  readonly prepare?: (fields: Fields, path: string) => readonly Role[] | void;
-  readonly checkDial?: (fields: Fields, dial: Fields, path: string) => void;
-}
+const passwordAuth = {
+  name: "username",
+  credentials: ["password"],
+  required: ["password"],
+} as const;
+const authOptions = {
+  mixed: { ...passwordAuth, allowRaw: true },
+  socks: passwordAuth,
+  shadowsocks: { ...passwordAuth, name: "name", allowRaw: true },
+  vless: { name: "name", credentials: ["uuid", "flow"], required: ["uuid"] },
+} as const satisfies Record<string, AuthOptions>;
 
-type RawByTarget = {
-  inbounds: RawInbound;
-  outbounds: RawOutbound;
-  endpoints: RawEndpoint;
-  services: RawService;
-  http_clients: HTTPClient;
-  "dns.servers": RawDnsServer;
-  "route.rule_set": RawRuleSet;
-  certificate_providers: RawProvider;
-  network_namespaces: RawNamespace;
-};
-type Variant<Raw, Kind> = Raw extends { type?: infer Type }
-  ? Kind extends Type
-    ? Raw
-    : never
-  : never;
-type Raw<D extends Definition> = D["target"] extends "http_clients"
-  ? HTTPClient
-  : Variant<RawByTarget[D["target"]], D["kind"]>;
-type Options<D extends Definition> = ReadonlyJson<
-  Required<Pick<Raw<D>, Extract<D["required"][number], keyof Raw<D>>>> &
-    Pick<Raw<D>, Extract<NonNullable<D["optional"]>[number], keyof Raw<D>>>
->;
-type Override<T, U> = Omit<T, keyof U> & U;
-
-type TlsProfile = {
-  server: ServerTls;
-  client: ClientTls;
-  "server-reality": ServerTls | RealityServerTls;
-  "client-reality": ClientTls | RealityClientTls;
-};
+type Catalog = KitInputs["factories"];
+type Kind<T extends Target> = keyof Catalog[T] & string;
+type Groups<T extends Target, K extends Kind<T>> = ReadonlyJson<Catalog[T][K]>;
+type Options<T extends Target, K extends Kind<T>> =
+  Groups<T, K> extends { options: infer O } ? StrictUnion<O> : never;
 type Tag = string | readonly string[] | undefined;
-type ExtraRoles<D> = D extends { roles: readonly (infer R extends Role)[] } ? R : never;
-type Built<D extends Definition, T extends Tag = string> = Resource<
-  D["target"],
-  D["kind"],
-  T,
-  (typeof targetRoles)[D["target"]][number] | ExtraRoles<D>
-> &
-  (D extends { listen: infer L }
-    ? ListenMethod<L extends "forwarding" ? InboundListener : Listener>
-    : unknown) &
-  (D extends { dial: infer F } ? DialMethod<F extends "direct" ? DirectDial : Dial> : unknown) &
-  (D extends { tls: infer P extends TlsMode } ? TlsMethod<TlsProfile[P]> : unknown) &
-  (D extends { auth: AuthOptions } ? AuthMethod : unknown);
+type ExtraRoles<T extends Target, K> = T extends "endpoints"
+  ? | (K extends keyof typeof endpointRoles ? (typeof endpointRoles)[K] : never)
+    | (K extends (typeof preferredRouteEndpoints)[number] ? "preferred-routes" : never)
+  : T extends "outbounds"
+    ? K extends "bridge"
+      ? "preferred-routes"
+      : never
+    : T extends "services"
+      ? K extends "resolved"
+        ? "resolved-service"
+        : never
+      : T extends "dns.servers"
+        ? K extends (typeof preferredDnsKinds)[number]
+          ? "preferred-domain"
+          : never
+        : never;
+type Profile<T extends Target, K, F> = "enabled" extends keyof F
+  ? T extends "inbounds" | "services"
+    ? ServerTls | (K extends "vless" ? RealityServerTls : never)
+    : ClientTls | (K extends "vless" ? RealityClientTls : never)
+  : never;
+type Built<
+  T extends Target,
+  K extends Kind<T>,
+  V extends Tag = string,
+  G = Groups<T, K>,
+> = Resource<T, K, V, (typeof targetRoles)[T][number] | ExtraRoles<T, K>> &
+  (G extends { listen: infer L } ? ListenMethod<L> : unknown) &
+  (G extends { dial: infer D } ? DialMethod<D> : unknown) &
+  (G extends { tls: infer F } ? TlsMethod<(F & { side?: never }) | Profile<T, K, F>> : unknown) &
+  (T extends "inbounds" ? (K extends keyof typeof authOptions ? AuthMethod : unknown) : unknown);
 
-type SettingsGroup = "listen" | "dial" | "tls";
-const settingsGroups = ["listen", "dial", "tls"] as const;
-const validators = new WeakMap<Definition, ReturnType<typeof compileSchema>>();
+type Factory<T extends Target, K extends Kind<T>> = T extends "services" | "http_clients"
+  ? {
+      (options: Options<T, K> & { tag: string }): Built<T, K>;
+      (
+        ...args: {} extends Options<T, K> ? [options?: Options<T, K>] : [options: Options<T, K>]
+      ): Built<T, K, string | undefined>;
+    }
+  : (options: Options<T, K>) => Built<T, K>;
 
-function validateFactoryOutput(def: Definition, fields: Fields, path: string): void {
-  let validate = validators.get(def);
-  if (!validate) {
-    const name = targetSchema[def.target];
-    validate = compileSchema(
-      def.target === "http_clients" ? definition(name) : variant(name, def.kind),
-    );
-    validators.set(def, validate);
-  }
-  checkSchema(validate, fields, path);
-}
+type Factories<T extends Target> = { [K in Kind<T> as CamelCase<K>]: Factory<T, K> };
 
 interface Membership {
   readonly user?: User;
   readonly name: unknown;
 }
-
 function prepareUsers(fields: Fields, auth: AuthOptions, path: string): readonly Membership[] {
   if (fields.users === undefined) return [];
   const users = fields.users;
@@ -244,237 +185,6 @@ function validateTag(tag: unknown, path: string): void {
   }
 }
 
-function build<D extends Definition, T extends Tag>(def: D, input: unknown): Built<D, T> {
-  const path = `${def.target}.${def.kind}`;
-  const options = fieldsFrom(input, path, [...def.required, ...(def.optional ?? [])], def.required);
-  validateTag(options.tag, `${path}.tag`);
-  const members = def.auth ? prepareUsers(options, def.auth, path) : [];
-  const extraRoles = def.prepare?.(options, path) ?? [];
-  const roles = Object.freeze([...targetRoles[def.target], ...(def.roles ?? []), ...extraRoles]);
-  const base = snapshot(
-    def.target === "http_clients" ? options : { type: def.kind, ...options },
-    path,
-  );
-  const references = Object.freeze({
-    ...def.references,
-    ...(def.listen ? listenReferences : {}),
-    ...(def.dial ? dialReferences : {}),
-    ...(def.tls ? { tls: expandTls } : {}),
-  });
-
-  function create(groups: Partial<Record<SettingsGroup, Fields>>): Built<D, T> {
-    const fields = { ...base };
-    for (const group of settingsGroups) {
-      for (const [key, value] of Object.entries(groups[group] ?? {})) {
-        if (Object.hasOwn(fields, key)) fail(keyPath(path, key), "conflicting output field");
-        fields[key] = value;
-      }
-    }
-    validateFactoryOutput(def, expandFields(fields, references, path, previewReference), path);
-
-    const apply = (group: SettingsGroup, getFields: () => Fields) => {
-      if (groups[group]) fail(keyPath(path, group), "settings group already applied");
-      return create({ ...groups, [group]: snapshot(getFields(), path) });
-    };
-    const methods: Fields = {};
-    if (def.listen)
-      methods.listen = (address: string, input: unknown) =>
-        apply("listen", () => listenFields(address, input, path, def.listen === "forwarding"));
-    if (def.dial)
-      methods.dial = (input: unknown) =>
-        apply("dial", () => {
-          const dial = dialFields(input, path, def.dial === "detour");
-          def.checkDial?.(fields, dial, path);
-          return dial;
-        });
-    const tlsMode = def.tls;
-    if (tlsMode)
-      methods.tls = (input: unknown) =>
-        apply("tls", () => tlsFields(input, `${path}.tls`, tlsMode));
-    if (def.auth)
-      methods.authUser = (user: User) => {
-        const matching = members.filter((entry) => entry.user === user);
-        if (
-          !isUser(user) ||
-          matching.length !== 1 ||
-          !user.name ||
-          members.filter((entry) => entry.name === user.name).length !== 1
-        ) {
-          fail(`${path}.authUser`, "expected one User entry with a unique non-empty name");
-        }
-        return Rule.match({
-          inbound: resource as unknown as Resource<"inbounds", string, string>,
-          auth_user: user.name,
-        });
-      };
-    const resource = createResource<Built<D, T>>(
-      Object.freeze({
-        target: def.target,
-        kind: def.kind,
-        fields: Object.freeze(fields),
-        references,
-        roles,
-        remoteDns: def.remoteDns,
-        startupDetour: def.startupDetour,
-      }),
-      methods,
-    );
-    return resource;
-  }
-  return create({});
-}
-
-function factory<const D extends Definition>(def: D) {
-  return (options: Options<D>): Built<D> => build(def, options);
-}
-
-const passwordAuth = {
-  name: "username",
-  credentials: ["password"],
-  required: ["password"],
-} as const;
-const mixed = {
-  target: "inbounds",
-  kind: "mixed",
-  required: ["tag"],
-  optional: ["users", "set_system_proxy"],
-  listen: "forwarding",
-  tls: "server",
-  auth: { ...passwordAuth, allowRaw: true },
-} as const satisfies Definition;
-const socks = {
-  target: "inbounds",
-  kind: "socks",
-  required: ["tag"],
-  optional: ["users"],
-  listen: "forwarding",
-  auth: passwordAuth,
-} as const satisfies Definition;
-const inboundVless = {
-  target: "inbounds",
-  kind: "vless",
-  required: ["tag", "users"],
-  listen: "forwarding",
-  tls: "server-reality",
-  auth: { name: "name", credentials: ["uuid", "flow"], required: ["uuid"] },
-} as const satisfies Definition;
-
-const shadowsocks = {
-  target: "inbounds",
-  kind: "shadowsocks",
-  required: ["tag", "method"],
-  optional: ["network", "password", "users", "managed"],
-  listen: "forwarding",
-  auth: { ...passwordAuth, name: "name", allowRaw: true },
-  prepare(fields, path) {
-    const hasUsers = Array.isArray(fields.users) && fields.users.length > 0;
-    if (hasUsers && fields.managed === true)
-      fail(`${path}.users`, "managed mode cannot have static users");
-    if (hasUsers || fields.managed === true) {
-      if (fields.method === "none")
-        fail(`${path}.method`, "method none is unavailable in multi-user modes");
-      return ["ssm"];
-    }
-  },
-} as const satisfies Definition;
-type ShadowsocksBase = Omit<Options<typeof shadowsocks>, "method" | "users" | "managed">;
-type Method = NonNullable<Extract<RawInbound, { type: "shadowsocks" }>["method"]>;
-type MultiMethod = Exclude<Method, "none">;
-type ManagedShadowsocks = ShadowsocksBase & {
-  method: MultiMethod;
-  managed: true;
-  users?: readonly [];
-};
-type StaticShadowsocks = ShadowsocksBase & {
-  method: MultiMethod;
-  managed?: false;
-  users: readonly [ShadowsocksEntry, ...ShadowsocksEntry[]];
-};
-type ShadowsocksOptions = ShadowsocksBase &
-  (
-    | { method: Method; managed?: false; users?: readonly [] }
-    | { method: MultiMethod; managed?: boolean; users?: readonly [] }
-    | { method: MultiMethod; managed?: false; users?: readonly ShadowsocksEntry[] }
-  );
-function makeShadowsocks(
-  options: ManagedShadowsocks | StaticShadowsocks,
-): Built<typeof shadowsocks> & SsmInbound;
-function makeShadowsocks(options: ShadowsocksOptions): Built<typeof shadowsocks>;
-function makeShadowsocks(options: ShadowsocksOptions): Built<typeof shadowsocks> {
-  return build(shadowsocks, options);
-}
-
-export const inbound = Object.freeze({
-  mixed: (options: Override<Options<typeof mixed>, { users?: readonly MixedEntry[] }>) =>
-    build<typeof mixed, string>(mixed, options),
-  socks: (
-    options: Override<Options<typeof socks>, { users?: readonly PasswordEntry<"username">[] }>,
-  ) => build<typeof socks, string>(socks, options),
-  vless: (options: Override<Options<typeof inboundVless>, { users: readonly VlessEntry[] }>) =>
-    build<typeof inboundVless, string>(inboundVless, options),
-  shadowsocks: makeShadowsocks,
-});
-
-const api = {
-  target: "services",
-  kind: "api",
-  required: [],
-  optional: [
-    "tag",
-    "secret",
-    "dashboard",
-    "access_control_allow_origin",
-    "access_control_allow_private_network",
-  ],
-  listen: "listener",
-  tls: "server",
-  references: { dashboard: expandDashboard },
-} as const satisfies Definition;
-type RawDashboard = NonNullable<Extract<RawService, { type: "api" }>["dashboard"]>;
-type Dashboard =
-  | boolean
-  | string
-  | Override<ReadonlyJson<Extract<RawDashboard, object>>, { http_client?: HttpClientInput }>;
-const ssmApi = {
-  target: "services",
-  kind: "ssm-api",
-  required: ["servers"],
-  optional: ["tag", "cache_path"],
-  listen: "listener",
-  tls: "server",
-  references: { servers: expandSsmServers },
-} as const satisfies Definition;
-
-export const service = Object.freeze({
-  /**
-   * sing-box defaults to loopback (127.0.0.1). An omitted or empty secret allows
-   * unauthenticated connections. Omitting server TLS uses plaintext TCP.
-   */
-  api: (options: Override<Options<typeof api>, { dashboard?: Dashboard }> = {}) =>
-    build<typeof api, string | undefined>(api, options),
-  ssmApi: (
-    options: Override<Options<typeof ssmApi>, { servers: Readonly<Record<string, SsmInbound>> }>,
-  ) => build<typeof ssmApi, string | undefined>(ssmApi, options),
-});
-
-const http = {
-  target: "http_clients",
-  kind: "http-client",
-  required: [],
-  optional: ["version", "headers", "tag"],
-  dial: "detour",
-  tls: "client",
-} as const satisfies Definition;
-export function httpClient(
-  options: Options<typeof http> & { tag: string },
-): Built<typeof http, string>;
-export function httpClient(options?: Options<typeof http>): Built<typeof http, string | undefined>;
-export function httpClient(
-  options: Options<typeof http> = {},
-): Built<typeof http, string | undefined> {
-  return build(http, options);
-}
-
 function checkGroup(fields: Fields, path: string): void {
   const candidates = fields.outbounds;
   if (!Array.isArray(candidates) || candidates.length === 0)
@@ -492,127 +202,6 @@ function checkGroup(fields: Fields, path: string): void {
     fail(`${path}.default`, "default must be a candidate");
   }
 }
-const selector = {
-  target: "outbounds",
-  kind: "selector",
-  required: ["tag", "outbounds"],
-  optional: ["default", "interrupt_exist_connections"],
-  prepare: checkGroup,
-  references: { outbounds: arrayOrOne(ref("egress")), default: ref("egress") },
-} as const satisfies Definition;
-const urltest = {
-  target: "outbounds",
-  kind: "urltest",
-  required: ["tag", "outbounds"],
-  optional: ["url", "interval", "tolerance", "idle_timeout", "interrupt_exist_connections"],
-  prepare: checkGroup,
-  references: { outbounds: arrayOrOne(ref("egress")) },
-} as const satisfies Definition;
-export const outbound = Object.freeze({
-  direct: factory({ target: "outbounds", kind: "direct", required: ["tag"], dial: "direct" }),
-  vless: factory({
-    target: "outbounds",
-    kind: "vless",
-    required: ["tag", "server", "server_port", "uuid"],
-    optional: ["flow"],
-    dial: "detour",
-    tls: "client-reality",
-    startupDetour: true,
-  }),
-  selector: (
-    options: Override<Options<typeof selector>, { outbounds: readonly Egress[]; default?: Egress }>,
-  ) => build<typeof selector, string>(selector, options),
-  urltest: (options: Override<Options<typeof urltest>, { outbounds: readonly Egress[] }>) =>
-    build<typeof urltest, string>(urltest, options),
-});
-
-export const endpoint = Object.freeze({
-  tailscale: factory({
-    target: "endpoints",
-    kind: "tailscale",
-    required: ["tag"],
-    optional: [
-      "state_directory",
-      "auth_key",
-      "hostname",
-      "accept_routes",
-      "exit_node",
-      "listen_port",
-    ],
-    dial: "detour",
-    roles: ["preferred-routes", "tailscale-endpoint"],
-  }),
-  wireguard: factory({
-    target: "endpoints",
-    kind: "wireguard",
-    required: ["tag", "address", "private_key"],
-    optional: ["peers", "listen_port", "system"],
-    dial: "detour",
-    startupDetour: true,
-    roles: ["preferred-routes"],
-    checkDial(fields, dial, path) {
-      if (
-        dial.detour !== undefined &&
-        fields.listen_port !== undefined &&
-        fields.listen_port !== 0
-      ) {
-        fail(`${path}.listen_port`, "non-zero WireGuard listen port with detour");
-      }
-    },
-  }),
-});
-
-const remoteDns = {
-  target: "dns.servers",
-  required: ["tag", "server"],
-  optional: ["server_port"],
-  dial: "detour",
-  remoteDns: true,
-} as const;
-const tailscaleDns = {
-  target: "dns.servers",
-  kind: "tailscale",
-  required: ["tag", "endpoint"],
-  optional: ["accept_default_resolvers", "accept_search_domain"],
-  roles: ["preferred-domain"],
-  references: { endpoint: ref("tailscale-endpoint") },
-} as const satisfies Definition;
-export const dnsServer = Object.freeze({
-  tcp: factory({ ...remoteDns, kind: "tcp" }),
-  udp: factory({ ...remoteDns, kind: "udp" }),
-  tls: factory({ ...remoteDns, kind: "tls", tls: "client" }),
-  https: factory({
-    ...remoteDns,
-    kind: "https",
-    tls: "client",
-    optional: ["server_port", "path", "headers"],
-  }),
-  tailscale: (options: Override<Options<typeof tailscaleDns>, { endpoint: TailscaleEndpoint }>) =>
-    build<typeof tailscaleDns, string>(tailscaleDns, options),
-});
-
-const tailscaleProvider = {
-  target: "certificate_providers",
-  kind: "tailscale",
-  required: ["tag", "endpoint"],
-  references: { endpoint: ref("tailscale-endpoint") },
-} as const satisfies Definition;
-export const certificateProvider = Object.freeze({
-  tailscale: (
-    options: Override<Options<typeof tailscaleProvider>, { endpoint: TailscaleEndpoint }>,
-  ) => build<typeof tailscaleProvider, string>(tailscaleProvider, options),
-});
-
-export const networkNamespace = Object.freeze({
-  default: factory({ target: "network_namespaces", kind: "default", required: ["tag", "path"] }),
-  unshare: factory({
-    target: "network_namespaces",
-    kind: "unshare",
-    required: ["tag"],
-    optional: ["pid_file"],
-  }),
-});
-
 function ruleSetFormat(fields: Fields, path: string, location: "path" | "url"): void {
   const input = fields[location];
   if (typeof input !== "string") fail(keyPath(path, location), "expected a string");
@@ -632,50 +221,244 @@ function ruleSetFormat(fields: Fields, path: string, location: "path" | "url"): 
   else fail(`${path}.format`, "cannot infer rule-set format");
 }
 
-const inlineRuleSet = {
-  target: "route.rule_set",
-  kind: "inline",
-  required: ["tag", "rules"],
-  prepare(fields, path) {
-    if (!Array.isArray(fields.rules) || !fields.rules.length)
-      fail(`${path}.rules`, "expected at least one rule");
-  },
-} as const satisfies Definition;
-const localRuleSet = {
-  target: "route.rule_set",
-  kind: "local",
-  required: ["tag", "path"],
-  optional: ["format"],
-  prepare: (fields, path) => ruleSetFormat(fields, path, "path"),
-} as const satisfies Definition;
-const remoteRuleSet = {
-  target: "route.rule_set",
-  kind: "remote",
-  required: ["tag", "url"],
-  optional: ["format", "initial_path", "update_interval", "http_client"],
-  references: { http_client: expandHttpClient },
-  prepare: (fields, path) => ruleSetFormat(fields, path, "url"),
-} as const satisfies Definition;
-function requireSingleTag(fields: Fields, path: string): void {
-  if (typeof fields.tag !== "string") fail(`${path}.tag`, "expected a single tag");
+type SettingsGroup = "listen" | "dial" | "tls";
+const settingsGroups = ["listen", "dial", "tls"] as const;
+
+function prepareOptions(
+  target: Target,
+  kind: string,
+  options: Fields,
+  path: string,
+  roles: Role[],
+): void {
+  if (target === "inbounds" && kind === "shadowsocks") {
+    const hasUsers = Array.isArray(options.users) && options.users.length > 0;
+    if (hasUsers && options.managed === true)
+      fail(`${path}.users`, "managed mode cannot have static users");
+    if (hasUsers || options.managed === true) {
+      if (options.method === "none")
+        fail(`${path}.method`, "method none is unavailable in multi-user modes");
+      roles.push("ssm");
+    }
+  }
+  if (target === "outbounds" && (kind === "selector" || kind === "urltest"))
+    checkGroup(options, path);
+  if (target === "services" && kind === "ssm-api")
+    checkSsmServers(options.servers, `${path}.servers`);
+  if (target === "route.rule_set") {
+    if (kind === "inline") {
+      if (typeof options.tag !== "string") fail(`${path}.tag`, "expected a single tag");
+      if (!Array.isArray(options.rules) || !options.rules.length)
+        fail(`${path}.rules`, "expected at least one rule");
+    } else {
+      ruleSetFormat(options, path, kind === "local" ? "path" : "url");
+    }
+  }
 }
 
-export const ruleSet = Object.freeze({
-  inline(options: {
-    tag: string;
-    rules: readonly ReadonlyJson<HeadlessRule>[];
-  }): Built<typeof inlineRuleSet> {
-    requireSingleTag(record(options, "ruleSet.inline"), "ruleSet.inline");
-    return build(inlineRuleSet, options);
+function getRoles(target: Target, kind: string): Role[] {
+  const roles: Role[] = [...targetRoles[target]];
+  if (target === "endpoints") {
+    if (Object.hasOwn(endpointRoles, kind))
+      roles.push(endpointRoles[kind as keyof typeof endpointRoles]);
+    if (preferredRouteEndpoints.some((preferred) => preferred === kind))
+      roles.push("preferred-routes");
+  }
+  if (target === "outbounds" && kind === "bridge") roles.push("preferred-routes");
+  if (target === "dns.servers" && preferredDnsKinds.some((preferred) => preferred === kind))
+    roles.push("preferred-domain");
+  if (target === "services" && kind === "resolved") roles.push("resolved-service");
+  return roles;
+}
+
+function makeFactory(target: Target, kind: string, branches: FactoryBranch[]) {
+  const path = `${target}.${kind}`;
+  const validators = new Map<FactoryBranch, ReturnType<typeof compileSchema>>();
+  const auth =
+    target === "inbounds" && Object.hasOwn(authOptions, kind)
+      ? authOptions[kind as keyof typeof authOptions]
+      : undefined;
+  return (input: unknown = {}): Resource => {
+    const raw = record(input, path);
+    const branch =
+      branches.length === 1
+        ? branches[0]!
+        : branches.find((item) => matchesDiscriminators(item.options, raw));
+    if (!branch) {
+      const discriminator = branches[0]?.options.properties?.version ? "version" : "provider";
+      fail(keyPath(path, discriminator), "invalid or missing branch discriminator");
+    }
+    const options = fieldsFrom(
+      raw,
+      path,
+      Object.keys(branch.options.properties!),
+      branch.options.required,
+    );
+    validateTag(options.tag, `${path}.tag`);
+    const members = auth ? prepareUsers(options, auth, path) : [];
+    const roles = getRoles(target, kind);
+    prepareOptions(target, kind, options, path, roles);
+    const base = snapshot(target === "http_clients" ? options : { type: kind, ...options }, path);
+    const expand = (value: unknown, path: string, resolve: Parameters<typeof expandInput>[3]) =>
+      expandInput(branch.output, value, path, resolve);
+
+    const validate = validators.get(branch) ?? compileSchema(branch.output);
+    validators.set(branch, validate);
+    const { listen, dial, tls } = branch;
+
+    function create(groups: Partial<Record<SettingsGroup, Fields>>): Resource {
+      const fields = { ...base };
+      for (const group of settingsGroups) {
+        for (const [key, value] of Object.entries(groups[group] ?? {})) {
+          if (Object.hasOwn(fields, key)) fail(keyPath(path, key), "conflicting output field");
+          fields[key] = value;
+        }
+      }
+      checkSchema(validate, expand(fields, path, previewReference), path);
+
+      const apply = (group: SettingsGroup, getFields: () => Fields) => {
+        if (groups[group]) fail(keyPath(path, group), "settings group already applied");
+        return create({ ...groups, [group]: snapshot(getFields(), path) });
+      };
+      const methods: Fields = {};
+      if (listen) {
+        methods.listen = (address?: unknown, input: unknown = {}) =>
+          apply("listen", () =>
+            address !== null && typeof address === "object"
+              ? listenFields(undefined, address, path, listen)
+              : listenFields(address, input, path, listen),
+          );
+      }
+      if (dial) {
+        methods.dial = (input: unknown) =>
+          apply("dial", () => {
+            const settings = fieldsFrom(input, path, Object.keys(dial.properties!));
+            if (
+              kind === "wireguard" &&
+              settings.detour !== undefined &&
+              fields.listen_port !== undefined &&
+              fields.listen_port !== 0
+            ) {
+              fail(`${path}.listen_port`, "non-zero WireGuard listen port with detour");
+            }
+            return settings;
+          });
+      }
+      if (tls) {
+        const name = definitionName(tls);
+        let mode: TlsMode | undefined;
+        if (name === "InboundTLSOptions") mode = kind === "vless" ? "server-reality" : "server";
+        if (name === "OutboundTLSOptions") mode = kind === "vless" ? "client-reality" : "client";
+        methods.tls = (input: unknown) =>
+          apply("tls", () => tlsFields(input, `${path}.tls`, tls, mode));
+      }
+      if (auth) {
+        methods.authUser = (user: User) => {
+          if (
+            !isUser(user) ||
+            members.filter((entry) => entry.user === user).length !== 1 ||
+            !user.name ||
+            members.filter((entry) => entry.name === user.name).length !== 1
+          ) {
+            fail(`${path}.authUser`, "expected one User entry with a unique non-empty name");
+          }
+          return Rule.match({
+            inbound: resource as Resource<"inbounds", string, string>,
+            auth_user: user.name,
+          });
+        };
+      }
+      const resource = createResource(
+        Object.freeze({
+          target,
+          kind,
+          fields: Object.freeze(fields),
+          expand,
+          roles: Object.freeze(roles),
+          remoteDns: target === "dns.servers" && Object.hasOwn(base, "server"),
+          startupDetour:
+            (target === "outbounds" && kind === "vless") ||
+            (target === "endpoints" && kind === "wireguard"),
+        }),
+        methods,
+      );
+      return resource;
+    }
+    return create({});
+  };
+}
+
+function factoriesFor<T extends Target>(target: T): Factories<T> {
+  return Object.fromEntries(
+    Array.from(factoryCatalog(target), ([kind, branches]) => [
+      factoryName(kind),
+      makeFactory(target, kind, branches),
+    ]),
+  ) as Factories<T>;
+}
+
+type ShadowsocksBase = Omit<Options<"inbounds", "shadowsocks">, "method" | "users" | "managed">;
+type Method = Options<"inbounds", "shadowsocks">["method"];
+type MultiMethod = Exclude<Method, "none">;
+type ManagedShadowsocks = ShadowsocksBase & {
+  method: MultiMethod;
+  managed: true;
+  users?: readonly [];
+};
+type StaticShadowsocks = ShadowsocksBase & {
+  method: MultiMethod;
+  managed?: false;
+  users: readonly [ShadowsocksEntry, ...ShadowsocksEntry[]];
+};
+type ShadowsocksOptions = ShadowsocksBase &
+  (
+    | { method: Method; managed?: false; users?: readonly [] }
+    | { method: MultiMethod; managed?: boolean; users?: readonly [] }
+    | { method: MultiMethod; managed?: false; users?: readonly ShadowsocksEntry[] }
+  );
+
+type AuthOptionsFor<K extends "mixed" | "socks" | "vless", U> = Omit<
+  Options<"inbounds", K>,
+  "users"
+> &
+  U;
+type InboundFactories = Omit<Factories<"inbounds">, keyof typeof authOptions> & {
+  mixed(
+    options: AuthOptionsFor<"mixed", { users?: readonly MixedEntry[] }>,
+  ): Built<"inbounds", "mixed">;
+  socks(
+    options: AuthOptionsFor<"socks", { users?: readonly PasswordEntry<"username">[] }>,
+  ): Built<"inbounds", "socks">;
+  vless(
+    options: AuthOptionsFor<"vless", { users: readonly VlessEntry[] }>,
+  ): Built<"inbounds", "vless">;
+  shadowsocks: {
+    (
+      options: ManagedShadowsocks | StaticShadowsocks,
+    ): Built<"inbounds", "shadowsocks"> & SsmInbound;
+    (options: ShadowsocksOptions): Built<"inbounds", "shadowsocks">;
+  };
+};
+
+type RuleSetFactory<K extends "local" | "remote"> = <const T extends string | readonly string[]>(
+  options: Omit<Options<"route.rule_set", K>, "tag"> & { readonly tag: T },
+) => Built<"route.rule_set", K, T>;
+
+export const inbound = Object.freeze(factoriesFor("inbounds") as unknown as InboundFactories);
+export const outbound = Object.freeze(factoriesFor("outbounds"));
+export const endpoint = Object.freeze(factoriesFor("endpoints"));
+export const service = Object.freeze(factoriesFor("services"));
+export const dnsServer = Object.freeze(factoriesFor("dns.servers"));
+export const certificateProvider = Object.freeze(factoriesFor("certificate_providers"));
+export const networkNamespace = Object.freeze(factoriesFor("network_namespaces"));
+export const httpClient: Factory<"http_clients", "http-client"> =
+  factoriesFor("http_clients").httpClient;
+export const ruleSet = Object.freeze(
+  factoriesFor("route.rule_set") as {
+    inline(
+      options: Omit<Options<"route.rule_set", "inline">, "tag"> & { tag: string },
+    ): Built<"route.rule_set", "inline">;
+    local: RuleSetFactory<"local">;
+    remote: RuleSetFactory<"remote">;
   },
-  local<const T extends string | readonly string[]>(
-    options: Override<Options<typeof localRuleSet>, { tag: T }>,
-  ) {
-    return build<typeof localRuleSet, T>(localRuleSet, options);
-  },
-  remote<const T extends string | readonly string[]>(
-    options: Override<Options<typeof remoteRuleSet>, { tag: T; http_client?: HttpClientInput }>,
-  ) {
-    return build<typeof remoteRuleSet, T>(remoteRuleSet, options);
-  },
-});
+);

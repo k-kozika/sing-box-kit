@@ -4,7 +4,9 @@ Use `Rule.match(fields)` to create a condition. Attach an action with `route.rul
 
 ## Match conditions
 
-Both rule scopes accept `domain`, `domain_suffix`, `port`, `inbound`, `rule_set`, and `auth_user`. Route rules also accept `client` and can use Tailscale or WireGuard endpoints in `preferred_by`. DNS rules also accept `query_type` and can use Tailscale DNS servers in `preferred_by`. The `inbound`, `rule_set`, and `preferred_by` fields accept one typed resource or an array of typed resources.
+Use the route and DNS condition fields from the pinned schema. Shared fields include `domain`, `domain_suffix`, `network`, `port`, `inbound`, `rule_set`, and `auth_user`. `client`, `network: "icmp"`, and `ip_cidr` without response matching are route conditions. `query_type`, `query_client_subnet`, `query_dnssec`, and response matching are DNS conditions.
+
+The `inbound`, `rule_set`, and `preferred_by` fields accept one typed resource or an array of typed resources. Route `preferred_by` accepts Tailscale, WireGuard, OpenConnect, and OpenVPN client endpoints and Bridge outbounds. DNS `preferred_by` accepts Hosts, Local, mDNS, Tailscale, OpenConnect, OpenVPN, and Resolved DNS servers.
 
 Use `.and()`, `.or()`, and `.not()` to build a condition tree. Each group retains its operand order, so `a.or(b).and(c)` means `(a OR b) AND c`. The action appears at the top level. Combining conditions requires at least one rule scope common to both operands.
 
@@ -41,17 +43,22 @@ compile({
 
 ## Actions
 
-| Rule scope | Action          | Options                                                                                |
-| ---------- | --------------- | -------------------------------------------------------------------------------------- |
-| Route      | `route`         | Requires an egress `outbound`                                                          |
-| Route      | `bypass`        | Optional egress `outbound`                                                             |
-| Route      | `hijack-dns`    | None                                                                                   |
-| DNS        | `route`         | Requires a DNS `server`. Accepts shared DNS options, `race`, and `speculative`         |
-| DNS        | `evaluate`      | Requires a DNS `server`. Accepts a result `tag`, shared DNS options, and `speculative` |
-| DNS        | `respond`       | Optional `race`                                                                        |
-| DNS        | `route-options` | Requires at least one effective shared DNS option                                      |
-| DNS        | `predefined`    | Optional `rcode`, `answer`, `ns`, `extra`, and `race`                                  |
-| Both       | `reject`        | Optional `method` of `default` or `drop`, plus `no_drop`. DNS also accepts `race`      |
+| Rule scope | Action          | Options                                                                                                                     |
+| ---------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Route      | `route`         | Requires an egress `outbound`. Accepts route options.                                                                       |
+| Route      | `bypass`        | Optional egress `outbound`. Accepts route options.                                                                          |
+| Route      | `hijack-dns`    | None                                                                                                                        |
+| Route      | `route-options` | Route options such as `override_address` and `override_port`                                                                |
+| Route      | `sniff`         | Optional `sniffer` and `timeout`                                                                                            |
+| Route      | `resolve`       | Optional typed DNS `server`, strategy, timeout, cache settings, TTL, and client subnet                                      |
+| DNS        | `route`         | Requires a DNS `server`. Accepts shared DNS options, `race`, and `speculative`                                              |
+| DNS        | `evaluate`      | Requires a DNS `server`. Accepts a result `tag`, shared DNS options, and `speculative`                                      |
+| DNS        | `respond`       | Optional `race`                                                                                                             |
+| DNS        | `route-options` | Requires at least one effective shared DNS option                                                                           |
+| DNS        | `predefined`    | Optional `rcode`, `answer`, `ns`, `extra`, and `race`                                                                       |
+| Both       | `reject`        | Optional `method` of `default` or `drop`, plus `no_drop`. Route also accepts `reply` for ICMP echo. DNS also accepts `race` |
+
+Route options include `override_address`, `override_port`, and the other fields defined by the pinned schema. Use these options with `route`, `bypass`, or `route-options`.
 
 Shared DNS options include `timeout`, `disable_cache`, `disable_optimistic_cache`, `rewrite_ttl`, `client_subnet`, and `remove_client_subnet`. For `route-options`, a positive timeout, a true flag, a valid subnet, or an explicit TTL counts as effective. A TTL of zero counts.
 

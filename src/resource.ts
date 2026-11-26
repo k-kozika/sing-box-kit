@@ -1,9 +1,6 @@
 import { fail, keyPath } from "./schema";
+import type { Fields } from "./type-utils";
 
-export type Fields = Record<string, unknown>;
-export type ReadonlyJson<T> = T extends object
-  ? { readonly [K in keyof T]: ReadonlyJson<T[K]> }
-  : T;
 export type Target =
   | "inbounds"
   | "outbounds"
@@ -27,7 +24,10 @@ export type Role =
   | "http-client"
   | "netns"
   | "rule-set"
-  | "tailscale-endpoint";
+  | "tailscale-endpoint"
+  | "openconnect-endpoint"
+  | "openvpn-client-endpoint"
+  | "resolved-service";
 
 declare const resourceBrand: unique symbol;
 export interface Resource<
@@ -47,12 +47,30 @@ export type ListenDetour = Resource<
   "listen-detour" | "inbound" | "ssm"
 >;
 export type Egress = Resource<"outbounds" | "endpoints", string, string>;
-export type PreferredRoutes = Resource<"endpoints", "tailscale" | "wireguard", string>;
+export const preferredRouteEndpoints = [
+  "tailscale",
+  "wireguard",
+  "openconnect",
+  "openvpn-client",
+] as const;
+export type PreferredRoutes =
+  | Resource<"endpoints", (typeof preferredRouteEndpoints)[number], string>
+  | Resource<"outbounds", "bridge", string>;
 export type DnsServer = Resource<"dns.servers", string, string>;
-export type PreferredDomain = Resource<"dns.servers", "tailscale", string>;
+export const preferredDnsKinds = [
+  "hosts",
+  "local",
+  "mdns",
+  "tailscale",
+  "openconnect",
+  "openvpn",
+  "resolved",
+] as const;
+export type PreferredDomain = Resource<"dns.servers", (typeof preferredDnsKinds)[number], string>;
 export type Namespace = Resource<"network_namespaces", string, string>;
 export type CertificateProvider = Resource<"certificate_providers", string, string>;
 export type TaggedHttpClient = Resource<"http_clients", "http-client", string>;
+export type HttpClientValue = Resource<"http_clients", "http-client", string | undefined>;
 export type RuleSetRef = Resource<"route.rule_set", string, string | readonly [string]>;
 export type SsmInbound = Resource<
   "inbounds",
@@ -62,16 +80,18 @@ export type SsmInbound = Resource<
 > & { readonly [ssmBrand]: true };
 declare const ssmBrand: unique symbol;
 export type TailscaleEndpoint = Resource<"endpoints", "tailscale", string>;
+export type OpenConnectEndpoint = Resource<"endpoints", "openconnect", string>;
+export type OpenVpnClientEndpoint = Resource<"endpoints", "openvpn-client", string>;
+export type ResolvedService = Resource<"services", "resolved", string>;
 
 export type Resolve = (value: unknown, role: Role, path: string) => string;
 export type Expand = (value: unknown, path: string, resolve: Resolve) => unknown;
-export type Expansions = Readonly<Record<string, Expand>>;
 export interface ResourceData {
   readonly target: Target;
   readonly kind: string;
   readonly fields: Fields;
   readonly roles: readonly Role[];
-  readonly references?: Expansions;
+  readonly expand?: Expand;
   readonly startupDetour?: boolean;
   readonly remoteDns?: boolean;
 }
@@ -153,33 +173,4 @@ export function snapshot<T>(value: T, path: string): T {
 
 export function copyJson<T>(value: T, path: string): T {
   return copy(value, path, false, new Set()) as T;
-}
-
-export const ref =
-  (role: Role): Expand =>
-  (value, path, resolve) =>
-    resolve(value, role, path);
-
-export const arrayOrOne =
-  (expand: Expand): Expand =>
-  (value, path, resolve) =>
-    Array.isArray(value)
-      ? Array.from(value, (item, index) => expand(item, `${path}[${index}]`, resolve))
-      : expand(value, path, resolve);
-
-export function expandFields(
-  fields: Fields,
-  expansions: Expansions,
-  path: string,
-  resolve: Resolve,
-): Fields {
-  return Object.fromEntries(
-    Object.entries(fields)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => {
-        const fieldPath = keyPath(path, key);
-        const expand = Object.hasOwn(expansions, key) ? expansions[key] : undefined;
-        return [key, expand ? expand(value, fieldPath, resolve) : copyJson(value, fieldPath)];
-      }),
-  );
 }

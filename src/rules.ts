@@ -1,50 +1,17 @@
 import { isIP } from "node:net";
-import type {
-  DNSRuleAction as RawDnsAction,
-  NestedDNSRule,
-  NestedRule,
-  RuleAction as RawRouteAction,
-} from "./generated/sing-box";
-import {
-  arrayOrOne,
-  expandFields,
-  fieldsFrom,
-  preserveIdentity,
-  ref,
-  record,
-  resourceData,
-  snapshot,
-} from "./resource";
-import type {
-  DnsServer,
-  Egress,
-  Expansions,
-  Fields,
-  InboundRef,
-  PreferredDomain,
-  PreferredRoutes,
-  ReadonlyJson,
-  Resolve,
-  RuleSetRef,
-} from "./resource";
-import {
-  checkSchema,
-  definition,
-  durationNanoseconds,
-  fail,
-  keyPath,
-  objectValidator,
-  pickSchema,
-} from "./schema";
-import { previewReference } from "./settings";
+import type { KitInputs } from "./generated/kit-inputs";
+import { ruleActionSchemas, ruleMatchSchema } from "./input-schema";
+import { fieldsFrom, preserveIdentity, record, resourceData, snapshot } from "./resource";
+import type { Resolve } from "./resource";
+import { checkSchema, compileSchema, durationNanoseconds, fail, keyPath } from "./schema";
+import type { SchemaNode } from "./schema";
+import { expandInput, previewReference } from "./settings";
+import type { Fields, ReadonlyJson, StrictUnion } from "./type-utils";
 
 export type Scope = "route" | "dns";
-type OneOrMany<T> = T | readonly T[];
-type RouteLeaf = Exclude<NestedRule, { type: "logical" }>;
-type DnsLeaf = Exclude<NestedDNSRule, { type: "logical" }>;
+type RouteMatch = ReadonlyJson<KitInputs["matches"]["route"]>;
+type DnsMatch = ReadonlyJson<KitInputs["matches"]["dns"]>;
 
-const commonMatches = ["domain", "domain_suffix", "port", "auth_user"] as const;
-const routeMatches = ["client"] as const;
 const responseMatches = [
   "response_rcode",
   "response_answer",
@@ -54,32 +21,28 @@ const responseMatches = [
   "ip_is_private",
   "ip_accept_any",
 ] as const;
-const dnsMatches = ["query_type", "match_response", ...responseMatches] as const;
-const referenceMatches = ["inbound", "rule_set", "preferred_by"] as const;
-
-type CommonMatches = ReadonlyJson<
-  Pick<RouteLeaf, Exclude<(typeof commonMatches)[number], "auth_user">>
-> & {
-  /** An empty string can match traffic with no authenticated name. */
-  readonly auth_user?: OneOrMany<string>;
-  readonly inbound?: OneOrMany<InboundRef>;
-  readonly rule_set?: OneOrMany<RuleSetRef>;
+type ResponseKey = (typeof responseMatches)[number];
+type DnsMatchInput = Omit<DnsMatch, ResponseKey | "match_response"> &
+  (
+    | (Pick<DnsMatch, ResponseKey> & { readonly match_response: true | string })
+    | {
+        readonly match_response?: false;
+        readonly ip_is_private?: false;
+        readonly ip_accept_any?: false;
+      }
+  );
+type AllMatchKeys = keyof RouteMatch | keyof DnsMatch;
+type RouteMatchInput = RouteMatch & {
+  readonly [K in Exclude<AllMatchKeys, keyof RouteMatch>]?: never;
 };
-type RouteMatches = ReadonlyJson<Pick<RouteLeaf, (typeof routeMatches)[number]>> & {
-  readonly preferred_by?: OneOrMany<PreferredRoutes>;
+type ScopedDnsMatch = DnsMatchInput & {
+  readonly [K in Exclude<AllMatchKeys, keyof DnsMatch>]?: never;
 };
-type DnsMatches = ReadonlyJson<Pick<DnsLeaf, (typeof dnsMatches)[number]>> & {
-  readonly preferred_by?: OneOrMany<PreferredDomain>;
-};
-type RouteMatchInput = CommonMatches &
-  RouteMatches & { readonly [K in (typeof dnsMatches)[number]]?: never };
-type DnsMatchInput = CommonMatches &
-  DnsMatches & { readonly [K in (typeof routeMatches)[number]]?: never };
-export type MatchFields = RouteMatchInput | DnsMatchInput;
+export type MatchFields = RouteMatchInput | ScopedDnsMatch;
 
 type MatchScope<M> =
   | ([M] extends [RouteMatchInput] ? "route" : never)
-  | ([M] extends [DnsMatchInput] ? "dns" : never);
+  | ([M] extends [ScopedDnsMatch] ? "dns" : never);
 
 declare const conditionBrand: unique symbol;
 export interface Condition<S extends Scope = Scope> {
@@ -120,54 +83,36 @@ function makeCondition<S extends Scope>(data: ConditionData): Condition<S> {
   return value;
 }
 
-const scopeMatches = { route: routeMatches, dns: dnsMatches };
-const allMatches = [...commonMatches, ...referenceMatches, ...routeMatches, ...dnsMatches];
+const routeKeys = new Set(Object.keys(ruleMatchSchema.route.properties!));
+const dnsKeys = new Set(Object.keys(ruleMatchSchema.dns.properties!));
+const allMatches = [...new Set([...routeKeys, ...dnsKeys])];
 const leafValidators = {
-  route: objectValidator(
-    pickSchema(definition("NestedRule").oneOf![0]!.properties!, [
-      ...commonMatches,
-      ...referenceMatches,
-      ...routeMatches,
-    ]),
-  ),
-  dns: objectValidator(
-    pickSchema(definition("NestedDNSRule").oneOf![0]!.properties!, [
-      ...commonMatches,
-      ...referenceMatches,
-      ...dnsMatches,
-    ]),
-  ),
-};
-const leafReferences: Record<Scope, Expansions> = {
-  route: {
-    inbound: arrayOrOne(ref("inbound")),
-    rule_set: arrayOrOne(ref("rule-set")),
-    preferred_by: arrayOrOne(ref("preferred-routes")),
-  },
-  dns: {
-    inbound: arrayOrOne(ref("inbound")),
-    rule_set: arrayOrOne(ref("rule-set")),
-    preferred_by: arrayOrOne(ref("preferred-domain")),
-  },
+  route: compileSchema(ruleMatchSchema.route),
+  dns: compileSchema(ruleMatchSchema.dns),
 };
 
 function active(value: unknown): boolean {
   return value !== undefined && value !== false && (!Array.isArray(value) || value.length !== 0);
 }
 
-function checkLeaf(fields: Fields, path: string): void {
+function checkLeaf(fields: Fields, path: string, scope: Scope): void {
   if (fields.match_response === "") fail(`${path}.match_response`, "empty response tag");
-  if (responseMatches.some((key) => active(fields[key])) && !active(fields.match_response)) {
+  if (
+    scope === "dns" &&
+    responseMatches.some((key) => active(fields[key])) &&
+    !active(fields.match_response)
+  ) {
     fail(`${path}.match_response`, "response fields require active response matching");
   }
-  if (!Object.values(fields).some(active)) fail(path, "condition has no active fields");
+  if (!Object.entries(fields).some(([key, value]) => key !== "invert" && active(value))) {
+    fail(path, "condition has no active fields");
+  }
 }
 
-function match<M extends MatchFields>(
-  input: M & Record<Exclude<keyof M, keyof MatchFields>, never>,
+function match<const M extends MatchFields>(
+  input: M & Record<Exclude<keyof M, AllMatchKeys>, never>,
 ): Condition<MatchScope<M>> {
   const fields = fieldsFrom(input, "match", allMatches);
-  checkLeaf(fields, "match");
   const preferred = Array.isArray(fields.preferred_by)
     ? fields.preferred_by
     : [fields.preferred_by];
@@ -178,18 +123,22 @@ function match<M extends MatchFields>(
   });
   if (hasDnsTransport && hasOtherResource)
     fail("match.preferred_by", "mixed route and DNS targets");
-  const scopes = allScopes.filter((scope) => {
-    const opposite = scope === "route" ? "dns" : "route";
-    return (
-      !scopeMatches[opposite].some((key) => fields[key] !== undefined) &&
-      !(scope === "route" ? hasDnsTransport : hasOtherResource)
-    );
-  });
+
+  const keys = Object.keys(fields);
+  const dnsOnly = hasDnsTransport || keys.some((key) => !routeKeys.has(key));
+  const icmp =
+    fields.network === "icmp" || (Array.isArray(fields.network) && fields.network.includes("icmp"));
+  const addressMatch = fields.ip_cidr !== undefined || fields.ip_is_private === true;
+  const routeOnly =
+    hasOtherResource || icmp || keys.some((key) => !dnsKeys.has(key)) || (addressMatch && !dnsOnly);
+  const scopes = allScopes.filter((scope) => (scope === "route" ? !dnsOnly : !routeOnly));
   if (!scopes.length) fail("match", "fields have no common scope");
+
   for (const scope of scopes) {
+    checkLeaf(fields, "match", scope);
     checkSchema(
       leafValidators[scope],
-      expandFields(fields, leafReferences[scope], "match", previewReference),
+      expandInput(ruleMatchSchema[scope], fields, "match", previewReference),
       "match",
     );
   }
@@ -198,96 +147,20 @@ function match<M extends MatchFields>(
 
 export const Rule = Object.freeze({ match });
 
-type SharedDnsOptions = ReadonlyJson<
-  Pick<
-    Extract<RawDnsAction, { action: "route-options" }>,
-    | "timeout"
-    | "disable_cache"
-    | "disable_optimistic_cache"
-    | "rewrite_ttl"
-    | "client_subnet"
-    | "remove_client_subnet"
-  >
->;
-type RejectOptions = Omit<Extract<RawRouteAction, { action: "reject" }>, "action" | "method"> & {
-  method?: "default" | "drop";
-};
-export type RouteRuleAction =
-  | { action: "route"; outbound: Egress }
-  | { action: "bypass"; outbound?: Egress }
-  | ({ action: "reject" } & RejectOptions)
-  | { action: "hijack-dns" };
-export type DnsRuleAction =
-  | ({
-      action: "route";
-      server: DnsServer;
-      speculative?: boolean;
-      race?: boolean;
-    } & SharedDnsOptions)
-  | ({
-      action: "evaluate";
-      server: DnsServer;
-      tag?: string;
-      speculative?: boolean;
-    } & SharedDnsOptions)
-  | Extract<RawDnsAction, { action: "respond" }>
-  | ({ action: "route-options" } & SharedDnsOptions)
-  | ({ action: "reject"; race?: boolean } & RejectOptions)
-  | ReadonlyJson<Extract<RawDnsAction, { action: "predefined" }>>;
-
+export type RouteRuleAction = StrictUnion<ReadonlyJson<KitInputs["actions"]["route"]>>;
+export type DnsRuleAction = StrictUnion<ReadonlyJson<KitInputs["actions"]["dns"]>>;
 export type RuleAction<S extends Scope> = { route: RouteRuleAction; dns: DnsRuleAction }[S];
 
-function actionVariant(
-  scope: Scope,
-  action: string,
-  keys: readonly string[],
-  required: readonly string[] = [],
-) {
-  const schema = definition(scope === "route" ? "RuleAction" : "DNSRuleAction");
-  const raw = schema.oneOf!.find((item) => item.properties?.action?.const === action)!.properties!;
-  const properties = pickSchema(raw, ["action", ...keys]);
-  if (action === "reject") properties.method = { type: "string", enum: ["default", "drop"] };
-  return {
-    keys: ["action", ...keys],
-    required: ["action", ...required],
-    validate: objectValidator(properties, ["action", ...required]),
-  };
+function actionsFor(scope: Scope) {
+  return new Map(
+    Array.from(ruleActionSchemas(scope), ([action, schema]) => [
+      action,
+      { schema, validate: compileSchema(schema) },
+    ]),
+  );
 }
 
-const sharedDnsOptions = [
-  "timeout",
-  "disable_cache",
-  "disable_optimistic_cache",
-  "rewrite_ttl",
-  "client_subnet",
-  "remove_client_subnet",
-] as const satisfies readonly (keyof SharedDnsOptions)[];
-const actions = {
-  route: {
-    route: actionVariant("route", "route", ["outbound"], ["outbound"]),
-    bypass: actionVariant("route", "bypass", ["outbound"]),
-    reject: actionVariant("route", "reject", ["method", "no_drop"]),
-    "hijack-dns": actionVariant("route", "hijack-dns", []),
-  },
-  dns: {
-    route: actionVariant(
-      "dns",
-      "route",
-      ["server", "speculative", "race", ...sharedDnsOptions],
-      ["server"],
-    ),
-    evaluate: actionVariant(
-      "dns",
-      "evaluate",
-      ["server", "tag", "speculative", ...sharedDnsOptions],
-      ["server"],
-    ),
-    respond: actionVariant("dns", "respond", ["race"]),
-    "route-options": actionVariant("dns", "route-options", sharedDnsOptions),
-    reject: actionVariant("dns", "reject", ["method", "no_drop", "race"]),
-    predefined: actionVariant("dns", "predefined", ["rcode", "answer", "ns", "extra", "race"]),
-  },
-};
+const actions = { route: actionsFor("route"), dns: actionsFor("dns") };
 
 function validSubnet(input: string): boolean {
   const [address = "", prefix, ...extra] = input.split("/");
@@ -300,7 +173,7 @@ function validSubnet(input: string): boolean {
   );
 }
 
-function checkAction(fields: Fields, path: string): void {
+function checkAction(fields: Fields, path: string, scope: Scope): void {
   if (fields.method === "drop" && fields.no_drop === true)
     fail(`${path}.no_drop`, "no_drop with drop");
   if (fields.client_subnet !== undefined) {
@@ -310,6 +183,7 @@ function checkAction(fields: Fields, path: string): void {
       fail(`${path}.client_subnet`, "invalid subnet");
   }
   if (
+    scope === "dns" &&
     fields.action === "route-options" &&
     fields.rewrite_ttl === undefined &&
     fields.client_subnet === undefined &&
@@ -324,8 +198,6 @@ function checkAction(fields: Fields, path: string): void {
     fail(`${path}.race`, "race with speculative");
 }
 
-const actionReferences = { route: { outbound: ref("egress") }, dns: { server: ref("dns-server") } };
-
 declare const ruleBrand: unique symbol;
 export interface RuleValue<S extends Scope> {
   readonly [ruleBrand]: S;
@@ -335,6 +207,7 @@ interface RuleData {
   readonly scope: Scope;
   readonly condition?: Condition;
   readonly action: Fields;
+  readonly schema: SchemaNode;
 }
 const rules = new WeakMap<object, RuleData>();
 
@@ -344,18 +217,17 @@ function makeRule<S extends Scope>(
   actionInput: unknown,
 ): RuleValue<S> {
   const path = `${scope}.rule`;
-  const variants = actions[scope] as Record<string, ReturnType<typeof actionVariant>>;
   const name = record(actionInput, path).action;
-  if (typeof name !== "string" || !Object.hasOwn(variants, name))
-    fail(`${path}.action`, "unsupported action");
-  const variant = variants[name]!;
-  const action = fieldsFrom(actionInput, path, variant.keys, variant.required);
-  checkSchema(
-    variant.validate,
-    expandFields(action, actionReferences[scope], path, previewReference),
+  const variant = typeof name === "string" ? actions[scope].get(name) : undefined;
+  if (!variant) fail(`${path}.action`, "unsupported action");
+  const action = fieldsFrom(
+    actionInput,
     path,
+    Object.keys(variant.schema.properties!),
+    variant.schema.required,
   );
-  checkAction(action, path);
+  checkSchema(variant.validate, expandInput(variant.schema, action, path, previewReference), path);
+  checkAction(action, path, scope);
   if (condition !== undefined && !conditionData(condition, path).scopes.includes(scope)) {
     fail(path, "condition is incompatible with rule scope");
   }
@@ -367,6 +239,7 @@ function makeRule<S extends Scope>(
     scope,
     condition: condition as Condition | undefined,
     action: snapshot(action, path),
+    schema: variant.schema,
   });
   return value;
 }
@@ -401,8 +274,10 @@ function expandCondition(value: Condition, scope: Scope, path: string, resolve: 
   const { node, invert } = conditionData(value, path);
   const inversion = invert ? { invert: true } : {};
   if ("fields" in node) {
-    checkLeaf(node.fields, path);
-    return { ...expandFields(node.fields, leafReferences[scope], path, resolve), ...inversion };
+    checkLeaf(node.fields, path, scope);
+    const fields = expandInput(ruleMatchSchema[scope], node.fields, path, resolve) as Fields;
+    if (invert) fields.invert = node.fields.invert !== true;
+    return fields;
   }
   if (!node.rules.length) fail(`${path}.rules`, "empty logical group");
   return {
@@ -425,7 +300,7 @@ export function expandRule(value: unknown, scope: Scope, path: string, resolve: 
   }
   return {
     ...(data.condition ? expandCondition(data.condition, scope, path, resolve) : {}),
-    ...expandFields(data.action, actionReferences[scope], path, resolve),
+    ...(expandInput(data.schema, data.action, path, resolve) as Fields),
   };
 }
 
