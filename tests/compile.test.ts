@@ -548,6 +548,16 @@ describe("Phase 2 resources and references", () => {
         compile({ outbounds: [egress], dns: { servers: [invalid.dial(dial), resolver] } }),
       ).not.toThrow();
     }
+    for (const server of ["::ffff:192.0.2.53", "fe80::53%eth0"]) {
+      expect(
+        compile({ dns: { servers: [doh("literal", server)] } }).dns?.servers?.[0],
+      ).toHaveProperty("server", server);
+    }
+    for (const server of ["192.000.2.53", "2001:db8::1::53", "[2001:db8::53]"]) {
+      expect(() => compile({ dns: { servers: [doh("invalid", server)] } })).toThrow(
+        "dns.servers[0].domain_resolver",
+      );
+    }
     for (const value of [doh(), dnsServer.tls({ tag: "dot", server: "2001:db8::53" })]) {
       const without = compile({ dns: { servers: [value] } }).dns?.servers?.[0];
       expect(without).not.toHaveProperty("tls");
@@ -1022,6 +1032,34 @@ describe("Phase 2 logical rules", () => {
       { action: "route-options", client_subnet: "2001:db8::/32" },
       { action: "route-options", remove_client_subnet: true },
     ]);
+  });
+
+  test("accepts unscoped client subnet addresses and bounds CIDR prefixes by IP version", () => {
+    const subnets = [
+      "192.0.2.1",
+      "2001:db8::1",
+      "192.0.2.1/0",
+      "192.0.2.1/32",
+      "::ffff:192.0.2.1/128",
+    ];
+    const rules = subnets.map((client_subnet) =>
+      dns.rule({ action: "route-options", client_subnet }),
+    );
+    expect(compile({ dns: { rules } }).dns?.rules).toEqual(
+      subnets.map((client_subnet) => ({ action: "route-options", client_subnet })),
+    );
+
+    for (const client_subnet of [
+      "192.0.2.1/33",
+      "2001:db8::1/129",
+      "192.0.2.1/",
+      "192.0.2.1/+24",
+      "192.0.2.1/24/1",
+      "fe80::1%eth0",
+      "fe80::1%eth0/64",
+    ]) {
+      expect(() => dns.rule({ action: "route-options", client_subnet })).toThrow("client_subnet");
+    }
   });
 
   test("binds DNS responses to earlier named and untagged evaluations", () => {

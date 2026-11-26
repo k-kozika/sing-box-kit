@@ -1,5 +1,5 @@
-import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
+import { isIP } from "../ip";
 import { pem, randomBytes } from "./crypto";
 
 function der(tag: number, ...parts: Uint8Array[]): Buffer<ArrayBuffer> {
@@ -26,7 +26,7 @@ function time(date: Date): Buffer<ArrayBuffer> {
   return der(utc ? 0x17 : 0x18, Buffer.from(`${value}Z`));
 }
 
-function ipAddress(name: string, version: number): Buffer<ArrayBuffer> {
+function ipAddress(name: string, version: 4 | 6): Buffer<ArrayBuffer> {
   if (version === 4) return Buffer.from(name.split(".").map(Number));
 
   const canonical = new URL(`http://[${name}]`).hostname.slice(1, -1);

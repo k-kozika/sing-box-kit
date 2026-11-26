@@ -1,7 +1,7 @@
-import { isIP } from "node:net";
 import type { SBKitInputs } from "./generated/sbkit-inputs";
-import { rootSettings, sectionSettings } from "./input-schema";
 import type { SingBoxConfig } from "./generated/sing-box";
+import { rootSettings, sectionSettings } from "./input-schema";
+import { isIP } from "./ip";
 import { copyJson, fieldsFrom, resourceData } from "./resource";
 import type {
   DnsServer,

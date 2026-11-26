@@ -115,7 +115,18 @@ test("generates a self-signed TLS certificate with a matching private key and SA
   expect(parsed.ca).toBe(false);
   expect(() => createSecureContext({ key: privateKey, cert: certificate })).not.toThrow();
 
-  const ip = "2001:db8::1";
-  expect(new X509Certificate((await TLSKeyPair(ip)).certificate).checkIP(ip)).toBe(ip);
   await rejects(TLSKeyPair("example.com", 0), RangeError);
+});
+
+test.each(["192.0.2.1", "2001:db8::1", "::ffff:192.0.2.1"])(
+  "encodes %s as a TLS IP subject alternative name",
+  async (ip) => {
+    const { certificate } = await TLSKeyPair(ip);
+    const parsed = new X509Certificate(certificate);
+    expect(parsed.checkIP(ip)).toBe(ip);
+  },
+);
+
+test("rejects a scoped IPv6 address for a TLS certificate", async () => {
+  await rejects(TLSKeyPair("fe80::1%eth0"), TypeError);
 });
