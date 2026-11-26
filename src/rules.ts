@@ -1,6 +1,6 @@
-import { isIP } from "node:net";
 import type { SBKitInputs } from "./generated/sbkit-inputs";
 import { ruleActionSchemas, ruleMatchSchema } from "./input-schema";
+import { isCIDR, isIP } from "./ip";
 import { fieldsFrom, preserveIdentity, record, resourceData, snapshot } from "./resource";
 import type { Resolve } from "./resource";
 import { checkSchema, compileSchema, durationNanoseconds, fail, keyPath } from "./schema";
@@ -162,25 +162,17 @@ function actionsFor(scope: Scope) {
 
 const actions = { route: actionsFor("route"), dns: actionsFor("dns") };
 
-function validSubnet(input: string): boolean {
-  const [address = "", prefix, ...extra] = input.split("/");
-  const version = isIP(address);
-  return (
-    version !== 0 &&
-    !address.includes("%") &&
-    extra.length === 0 &&
-    (prefix === undefined || (/^\d+$/.test(prefix) && Number(prefix) <= (version === 4 ? 32 : 128)))
-  );
-}
-
 function checkAction(fields: Fields, path: string, scope: Scope): void {
   if (fields.method === "drop" && fields.no_drop === true)
     fail(`${path}.no_drop`, "no_drop with drop");
   if (fields.client_subnet !== undefined) {
     if (fields.remove_client_subnet === true)
       fail(`${path}.client_subnet`, "client_subnet with remove_client_subnet");
-    if (!validSubnet(fields.client_subnet as string))
-      fail(`${path}.client_subnet`, "invalid subnet");
+    const subnet = fields.client_subnet as string;
+    const valid = subnet.includes("/")
+      ? isCIDR(subnet)
+      : !subnet.includes("%") && isIP(subnet) !== 0;
+    if (!valid) fail(`${path}.client_subnet`, "invalid subnet");
   }
   if (
     scope === "dns" &&
