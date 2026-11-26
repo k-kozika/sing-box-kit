@@ -15,6 +15,9 @@ import {
   service,
   user,
   validateConfig,
+  Random,
+  X25519KeyPair,
+  x25519PublicKey,
 } from "../index";
 import type {
   CompileInput,
@@ -451,3 +454,8 @@ legacySnell.client({ tag: "out", options: legacyObfs });
 defaultSnell.client({ tag: "out", options: legacyObfs });
 // @ts-expect-error Explicit Snell v6 has no obfs_host.
 v6Snell.client(profileAlice, { tag: "out", options: legacyObfs });
+
+const _randomBytes: Uint8Array = Random(32);
+const _publicKey: Uint8Array = x25519PublicKey(X25519KeyPair().privateKey);
+// @ts-expect-error X25519 accepts raw private-key bytes.
+x25519PublicKey("base64");
