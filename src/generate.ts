@@ -2,38 +2,38 @@ import { serverCertificate } from "./internal/certificate";
 import { deriveX25519PublicKey, randomBytes } from "./internal/crypto";
 import { encodeEchKeyPair } from "./internal/ech";
 
-export function uuid(): string {
+function uuid(): string {
   return globalThis.crypto.randomUUID();
 }
 
-export function random(length: number): Uint8Array {
+function random(length: number): Uint8Array {
   return randomBytes(length);
 }
 
-export function randomHex(length: number): string {
+function randomHex(length: number): string {
   return Buffer.from(random(length)).toString("hex");
 }
 
-export function randomBase64(length: number): string {
+function randomBase64(length: number): string {
   return Buffer.from(random(length)).toString("base64");
 }
 
-export function randomBase64Url(length: number): string {
+function randomBase64Url(length: number): string {
   return Buffer.from(random(length)).toString("base64url");
 }
 
-export function x25519PublicKey(privateKey: Uint8Array): Promise<Uint8Array> {
+function x25519PublicKey(privateKey: Uint8Array): Promise<Uint8Array> {
   return deriveX25519PublicKey(privateKey);
 }
 
-export async function x25519KeyPair() {
+async function x25519KeyPair() {
   const privateKey = randomBytes(32);
   privateKey[0] = privateKey[0]! & 248;
   privateKey[31] = (privateKey[31]! & 127) | 64;
   return { privateKey, publicKey: await x25519PublicKey(privateKey) };
 }
 
-export async function reality() {
+async function reality() {
   const { privateKey, publicKey } = await x25519KeyPair();
   return {
     privateKey: Buffer.from(privateKey).toString("base64url"),
@@ -41,7 +41,7 @@ export async function reality() {
   };
 }
 
-export async function wireguard() {
+async function wireguard() {
   const { privateKey, publicKey } = await x25519KeyPair();
   return {
     privateKey: Buffer.from(privateKey).toString("base64"),
@@ -49,7 +49,7 @@ export async function wireguard() {
   };
 }
 
-export async function vapidKeyPair() {
+async function vapidKeyPair() {
   const { subtle } = globalThis.crypto;
   const key = await subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
     "sign",
@@ -60,7 +60,7 @@ export async function vapidKeyPair() {
   return { privateKey: privateKey!, publicKey: Buffer.from(publicKey).toString("base64url") };
 }
 
-export async function tailcatKeyPair() {
+async function tailcatKeyPair() {
   const { privateKey, publicKey } = await x25519KeyPair();
   const { subtle } = globalThis.crypto;
   const hmacKey = await subtle.importKey(
@@ -86,7 +86,7 @@ export async function tailcatKeyPair() {
   };
 }
 
-export async function echKeyPair(publicName: string) {
+async function echKeyPair(publicName: string) {
   const name = Buffer.from(publicName);
   if (name.length < 1 || name.length > 255) {
     throw new RangeError("ECH public name must be between 1 and 255 bytes");
@@ -96,6 +96,22 @@ export async function echKeyPair(publicName: string) {
   return encodeEchKeyPair(name, privateKey, publicKey);
 }
 
-export function tlsKeyPair(serverName: string, months = 1) {
+function tlsKeyPair(serverName: string, months = 1) {
   return serverCertificate(serverName, months);
 }
+
+export const generate = {
+  uuid,
+  random,
+  randomHex,
+  randomBase64,
+  randomBase64Url,
+  x25519KeyPair,
+  x25519PublicKey,
+  reality,
+  wireguard,
+  vapidKeyPair,
+  tailcatKeyPair,
+  echKeyPair,
+  tlsKeyPair,
+} as const;

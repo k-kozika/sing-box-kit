@@ -4,6 +4,7 @@ import {
   dns,
   dnsServer,
   endpoint,
+  generate,
   httpClient,
   inbound,
   networkNamespace,
@@ -15,9 +16,6 @@ import {
   service,
   user,
   validateConfig,
-  Random,
-  X25519KeyPair,
-  x25519PublicKey,
 } from "../index";
 import type {
   CompileInput,
@@ -455,9 +453,9 @@ defaultSnell.client({ tag: "out", options: legacyObfs });
 // @ts-expect-error Explicit Snell v6 has no obfs_host.
 v6Snell.client(profileAlice, { tag: "out", options: legacyObfs });
 
-const _randomBytes: Uint8Array = Random(32);
-const _publicKey: Promise<Uint8Array> = X25519KeyPair().then(({ privateKey }) =>
-  x25519PublicKey(privateKey),
-);
+const _randomBytes: Uint8Array = generate.random(32);
+const _publicKey: Promise<Uint8Array> = generate
+  .x25519KeyPair()
+  .then(({ privateKey }) => generate.x25519PublicKey(privateKey));
 // @ts-expect-error X25519 accepts raw private-key bytes.
-void x25519PublicKey("base64");
+void generate.x25519PublicKey("base64");

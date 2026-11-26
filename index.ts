@@ -39,18 +39,4 @@ export type {
 } from "./src/settings";
 export { user } from "./src/user";
 export type { User, UserCredentials } from "./src/user";
-export {
-  echKeyPair as ECHKeyPair,
-  random as Random,
-  randomBase64 as RandomBase64,
-  randomBase64Url as RandomBase64Url,
-  randomHex as RandomHex,
-  reality as Reality,
-  tailcatKeyPair as TailcatKeyPair,
-  tlsKeyPair as TLSKeyPair,
-  uuid as UUID,
-  vapidKeyPair as VapidKeyPair,
-  wireguard as Wireguard,
-  x25519KeyPair as X25519KeyPair,
-  x25519PublicKey,
-} from "./src/generate";
+export { generate } from "./src/generate";
