@@ -1,0 +1,33 @@
+name: Stage npm release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+concurrency:
+  group: npm-stage-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  stage:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-package
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "^24.18.0"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm stage publish ./sing-box-kit.tgz
