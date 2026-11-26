@@ -18,14 +18,13 @@ export async function deriveX25519PublicKey(
 
   const { subtle } = globalThis.crypto;
   // RFC 8410 PKCS#8 header for a 32-byte X25519 private key.
-  const header = Buffer.from("302e020100300506032b656e04220420", "hex");
-  const key = await subtle.importKey(
-    "pkcs8",
-    Buffer.concat([header, privateKey]),
-    "X25519",
-    false,
-    ["deriveBits"],
-  );
+  const header = [
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
+  ];
+  const pkcs8 = new Uint8Array(header.length + privateKey.length);
+  pkcs8.set(header);
+  pkcs8.set(privateKey, header.length);
+  const key = await subtle.importKey("pkcs8", pkcs8, "X25519", false, ["deriveBits"]);
 
   // X25519 with the standard base point yields the corresponding public key.
   const basePoint = new Uint8Array(32);

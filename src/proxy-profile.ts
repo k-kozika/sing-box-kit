@@ -1,4 +1,3 @@
-import { createPrivateKey, createPublicKey } from "node:crypto";
 import { inbound, outbound } from "./factories";
 import type {
   Hysteria2InboundRealm,
@@ -8,6 +7,7 @@ import type {
   ShadowTLSHandshakeOptions,
   V2RayTransport,
 } from "./generated/sbkit-inputs";
+import { validateRealityKeyPair } from "./internal/reality";
 import { fieldsFrom, record, snapshot } from "./resource";
 import type { Resource, SsmInbound } from "./resource";
 import { fail, keyPath } from "./schema";
@@ -180,6 +180,9 @@ interface Profile<
 type TransportInput<K extends TransportProtocol> = Direct & {
   readonly users: Users;
 } & TransportTls<K>;
+type VlessInput = TransportInput<"vless">;
+type VlessProfile<Input = unknown> = Profile<"vless", true, unknown, Input>;
+type VlessProfileResult<Input = unknown> = VlessProfile<Input> | Promise<VlessProfile<Input>>;
 type PlainInput = Direct & { readonly tls?: NormalTls | NoTls };
 type RequiredTlsInput<K extends Protocol = Protocol> = Direct & {
   readonly users: Users;
@@ -319,28 +322,6 @@ function usersFor(input: unknown, path: string): readonly User[] {
   });
 }
 
-function realityKeys(input: unknown, path: string): Fields {
-  const keys = fieldsFrom(input, path, ["privateKey", "publicKey"], ["privateKey", "publicKey"]);
-  const { privateKey, publicKey } = keys;
-  for (const [key, value] of Object.entries(keys)) {
-    if (
-      typeof value !== "string" ||
-      !/^[A-Za-z0-9_-]{43}$/.test(value) ||
-      Buffer.from(value, "base64url").toString("base64url") !== value
-    )
-      fail(`${path}.${key}`, "expected an unpadded 32-byte Base64url key");
-  }
-  // The PKCS #8 prefix identifies a raw X25519 private key.
-  const der = Buffer.concat([
-    Buffer.from("302e020100300506032b656e04220420", "hex"),
-    Buffer.from(privateKey as string, "base64url"),
-  ]);
-  const derived = createPublicKey(createPrivateKey({ key: der, format: "der", type: "pkcs8" }));
-  if (derived.export({ format: "jwk" }).x !== publicKey)
-    fail(`${path}.publicKey`, "does not match private key");
-  return keys;
-}
-
 function tlsFor(kind: Protocol, input: unknown, needsTls: boolean, path: string) {
   const { mode } = record(input ?? { mode: "none" }, path);
   if (mode === "tls") {
@@ -385,7 +366,12 @@ function tlsFor(kind: Protocol, input: unknown, needsTls: boolean, path: string)
   return {
     mode,
     serverName: fields.serverName,
-    keys: realityKeys(fields.keyPair, `${path}.keyPair`),
+    keys: fieldsFrom(
+      fields.keyPair,
+      `${path}.keyPair`,
+      ["privateKey", "publicKey"],
+      ["privateKey", "publicKey"],
+    ),
     ids: ids as string[],
     handshake: { ...dial, ...connection({ host, port }, `${path}.handshake`) },
   } as const;
@@ -489,11 +475,18 @@ function protocolOptions(
 }
 
 function makeProfile<
+  K extends Exclude<Protocol, "vless">,
+  Authenticated extends boolean,
+  ExtraInbound = unknown,
+  Input = unknown,
+>(kind: K, input: unknown): Profile<K, Authenticated, ExtraInbound, Input>;
+function makeProfile(kind: "vless", input: unknown): VlessProfileResult;
+function makeProfile<
   K extends Protocol,
   Authenticated extends boolean,
   ExtraInbound = unknown,
   Input = unknown,
->(kind: K, input: unknown): Profile<K, Authenticated, ExtraInbound, Input> {
+>(kind: K, input: unknown) {
   const path = `proxyProfile.${kind}`;
   const sharedKey = Object.hasOwn(sharedOption, kind)
     ? sharedOption[kind as keyof typeof sharedOption]
@@ -722,7 +715,15 @@ function makeProfile<
       return applyTls(builder, local, location, true);
     },
   };
-  return Object.freeze(profile) as unknown as Profile<K, Authenticated, ExtraInbound, Input>;
+  const result = Object.freeze(profile) as unknown as Profile<
+    K,
+    Authenticated,
+    ExtraInbound,
+    Input
+  >;
+  if (tls.mode === "reality")
+    return validateRealityKeyPair(tls.keys, `${path}.tls.keyPair`).then(() => result);
+  return result;
 }
 
 function requiredString(input: unknown, path: string): string {
@@ -797,7 +798,7 @@ function shadowsocks(input: ShadowsocksInput) {
   return makeProfile<"shadowsocks", boolean>("shadowsocks", input);
 }
 
-function transportProfile<K extends TransportProtocol>(kind: K) {
+function transportProfile<K extends Exclude<TransportProtocol, "vless">>(kind: K) {
   function create<const Transport extends TransportKind>(
     input: TransportInput<K> & TransportSelection<Transport>,
   ): Profile<K, true, unknown, TransportSelection<Transport>>;
@@ -806,6 +807,22 @@ function transportProfile<K extends TransportProtocol>(kind: K) {
     return makeProfile<K, true>(kind, input);
   }
   return create;
+}
+
+function vless<const Transport extends TransportKind>(
+  input: VlessInput & TransportSelection<Transport> & { readonly tls: RealityTls },
+): Promise<VlessProfile<TransportSelection<Transport>>>;
+function vless<const Transport extends TransportKind>(
+  input: VlessInput & TransportSelection<Transport> & { readonly tls?: NormalTls | NoTls },
+): VlessProfile<TransportSelection<Transport>>;
+function vless<const Transport extends TransportKind>(
+  input: VlessInput & TransportSelection<Transport>,
+): VlessProfileResult<TransportSelection<Transport>>;
+function vless(input: VlessInput & { readonly tls: RealityTls }): Promise<VlessProfile>;
+function vless(input: VlessInput & { readonly tls?: NormalTls | NoTls }): VlessProfile;
+function vless(input: VlessInput): VlessProfileResult;
+function vless(input: VlessInput) {
+  return makeProfile("vless", input);
 }
 
 export const proxyProfile = Object.freeze({
@@ -820,6 +837,6 @@ export const proxyProfile = Object.freeze({
   socks,
   trojan: transportProfile("trojan"),
   tuic: (input: RequiredTlsInput) => makeProfile<"tuic", true>("tuic", input),
-  vless: transportProfile("vless"),
+  vless,
   vmess: transportProfile("vmess"),
 });

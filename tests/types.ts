@@ -358,6 +358,31 @@ compile({
   route: { rules: [route.rule(grpcInbound.authUser(profileAlice), { action: "reject" })] },
 });
 
+const realityTls = {
+  mode: "reality",
+  serverName: "cover.test",
+  handshake: profileConnect,
+  keyPair: { privateKey: "private-key", publicKey: "public-key" },
+  shortId: "",
+} as const;
+const realityProfile = proxyProfile.vless({
+  connect: profileConnect,
+  users: [profileAlice],
+  tls: realityTls,
+  transport: { type: "grpc", service_name: "proxy" },
+});
+// @ts-expect-error REALITY key validation must finish before the profile can be used.
+realityProfile.server(profileServer);
+const realityGrpc = await realityProfile;
+realityGrpc.client(profileAlice, { tag: "reality", transport: { permit_without_stream: true } });
+
+const maybeReality = proxyProfile.vless({
+  connect: profileConnect,
+  users: [profileAlice],
+  tls: Math.random() > 0.5 ? realityTls : { mode: "none" },
+});
+(await maybeReality).server(profileServer);
+
 const managedProfile = proxyProfile.shadowsocks({
   connect: profileConnect,
   managed: true,
@@ -428,7 +453,7 @@ ws.client(profileAlice, { tag: "out", transport: wsHeaders });
 ws.client(profileAlice, { tag: "out", transport: sideHeaders });
 const sharedGrpc = { type: "grpc", service_name: "proxy", headers: { "x-proxy": "one" } } as const;
 // @ts-expect-error A shared gRPC transport cannot include headers.
-proxyProfile.vless({ connect: profileConnect, users: [profileAlice], transport: sharedGrpc });
+void proxyProfile.vless({ connect: profileConnect, users: [profileAlice], transport: sharedGrpc });
 // @ts-expect-error Native gRPC transport cannot include headers.
 inbound.vless({ tag: "in", users: [profileAlice], transport: sharedGrpc });
 // @ts-expect-error Native gRPC transport cannot include headers.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createPrivateKey, createPublicKey } from "node:crypto";
+import { rejects } from "node:assert/strict";
 import { compile, inbound, outbound, proxyProfile, route, service, user } from "../index";
 
 const connect = { host: "edge.example", port: 443 };
@@ -95,16 +95,10 @@ describe("proxy profiles", () => {
     expect(() => profile.client(user({ name: "alice" }), client)).toThrow("client.user");
   });
 
-  test("selects a REALITY short ID and only emits the key for the requested side", () => {
+  test("selects a REALITY short ID and only emits the key for the requested side", async () => {
     const alice = user({ name: "alice", credentials: { vless: { uuid } } });
-    const raw = Buffer.alloc(32, 17);
-    const privateKey = raw.toString("base64url");
-    const key = createPrivateKey({
-      key: Buffer.concat([Buffer.from("302e020100300506032b656e04220420", "hex"), raw]),
-      format: "der",
-      type: "pkcs8",
-    });
-    const publicKey = createPublicKey(key).export({ format: "jwk" }).x!;
+    const privateKey = "ERERERERERERERERERERERERERERERERERERERERERE";
+    const publicKey = "e06Qm75__kTEZaIgA31gjuNYl9Me-XLwf3SJLLD3PxM";
     const tls = {
       mode: "reality",
       serverName: "cover.example",
@@ -112,7 +106,7 @@ describe("proxy profiles", () => {
       handshake: { host: "target.example", port: 443 },
       shortIds: ["0011", "aabb"],
     } as const;
-    const profile = proxyProfile.vless({ users: [alice], connect, tls });
+    const profile = await proxyProfile.vless({ users: [alice], connect, tls });
     const serverConfig = compile({ inbounds: [profile.server(server)] });
     expect(serverConfig).toMatchObject({
       inbounds: [
@@ -147,14 +141,37 @@ describe("proxy profiles", () => {
     expect(JSON.stringify(clientConfig)).not.toContain(privateKey);
     expect(() => profile.client(alice, client)).toThrow("shortId");
     expect(() => profile.client(alice, { ...client, shortId: "ccdd" })).toThrow("shortId");
-    expect(() =>
+    await rejects(
       proxyProfile.vless({
         users: [alice],
         connect,
         tls: { ...tls, keyPair: { privateKey, publicKey: privateKey } },
       }),
-    ).toThrow("does not match");
-    const single = proxyProfile.vless({
+      { message: "proxyProfile.vless.tls.keyPair.publicKey: does not match private key" },
+    );
+    await rejects(
+      proxyProfile.vless({
+        users: [alice],
+        connect,
+        tls: { ...tls, keyPair: { privateKey: `${privateKey}=`, publicKey } },
+      }),
+      {
+        message:
+          "proxyProfile.vless.tls.keyPair.privateKey: expected an unpadded 32-byte Base64url key",
+      },
+    );
+    await rejects(
+      proxyProfile.vless({
+        users: [alice],
+        connect,
+        tls: { ...tls, keyPair: { privateKey, publicKey: `${publicKey.slice(0, -1)}N` } },
+      }),
+      {
+        message:
+          "proxyProfile.vless.tls.keyPair.publicKey: expected an unpadded 32-byte Base64url key",
+      },
+    );
+    const single = await proxyProfile.vless({
       users: [alice],
       connect,
       tls: {
