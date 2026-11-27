@@ -145,6 +145,14 @@ describe("proxy profiles", () => {
       proxyProfile.vless({
         users: [alice],
         connect,
+        tls: { ...tls, shortIds: ["zz"] },
+      }),
+      { message: "proxyProfile.vless.tls.shortIds: expected unique hexadecimal short IDs" },
+    );
+    await rejects(
+      proxyProfile.vless({
+        users: [alice],
+        connect,
         tls: { ...tls, keyPair: { privateKey, publicKey: privateKey } },
       }),
       { message: "proxyProfile.vless.tls.keyPair.publicKey: does not match private key" },

@@ -809,6 +809,10 @@ function transportProfile<K extends Exclude<TransportProtocol, "vless">>(kind: K
   return create;
 }
 
+async function vlessReality(input: VlessInput): Promise<VlessProfile> {
+  return makeProfile("vless", input);
+}
+
 function vless<const Transport extends TransportKind>(
   input: VlessInput & TransportSelection<Transport> & { readonly tls: RealityTls },
 ): Promise<VlessProfile<TransportSelection<Transport>>>;
@@ -822,6 +826,7 @@ function vless(input: VlessInput & { readonly tls: RealityTls }): Promise<VlessP
 function vless(input: VlessInput & { readonly tls?: NormalTls | NoTls }): VlessProfile;
 function vless(input: VlessInput): VlessProfileResult;
 function vless(input: VlessInput) {
+  if (input?.tls?.mode === "reality") return vlessReality(input);
   return makeProfile("vless", input);
 }
 

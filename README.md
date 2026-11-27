@@ -26,7 +26,7 @@ bun config.ts > config.json
 sing-box check -c config.json
 ```
 
-On Node.js 22.1 or later, install with `npm install sing-box-kit`, save the same example as `config.mjs`, and generate JSON with `node config.mjs > config.json`.
+On Node.js 22.13 or later, install with `npm install sing-box-kit`, save the same example as `config.mjs`, and generate JSON with `node config.mjs > config.json`.
 
 To run the example from a source checkout, run `vp install --frozen-lockfile` and use `./index` as the import path.
 
