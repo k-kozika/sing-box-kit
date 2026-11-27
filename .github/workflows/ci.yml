@@ -53,34 +53,8 @@ jobs:
           consumer_dir=$(mktemp -d)
           cd "$consumer_dir"
           "$bun_path" add "$RUNNER_TEMP/sing-box-kit.tgz"
-          "$node_path" --input-type=module <<'EOF'
-          import assert from "node:assert/strict";
-          import { createPrivateKey, X509Certificate } from "node:crypto";
-          import { compile, endpoint, generate, outbound, service, validateConfig } from "sing-box-kit";
-
-          const direct = outbound.direct({ tag: "direct" });
-          assert.deepEqual(compile({ outbounds: [direct] }), {
-            outbounds: [{ type: "direct", tag: "direct" }],
-          });
-
-          const tailscale = endpoint.tailscale({ tag: "tail", advertise_exit_node: true });
-          const usbip = service.usbipServer({ provider: "dynamic" }).listen({ port: 0 });
-          const config = compile({ endpoints: [tailscale], services: [usbip] });
-          assert.equal(validateConfig(config), config);
-          assert.deepEqual(config, {
-            endpoints: [{ type: "tailscale", tag: "tail", advertise_exit_node: true }],
-            services: [{ type: "usbip-server", provider: "dynamic", listen_port: 0 }],
-          });
-
-          const { privateKey, certificate } = await generate.tlsKeyPair("example.com");
-          const parsed = new X509Certificate(certificate);
-          assert.equal(parsed.checkHost("example.com", { subject: "never" }), "example.com");
-          assert.ok(parsed.checkPrivateKey(createPrivateKey(privateKey)));
-          assert.ok(parsed.verify(parsed.publicKey));
-          const ech = await generate.echKeyPair("example.com");
-          assert.match(ech.config, /^-----BEGIN ECH CONFIGS-----/);
-          assert.match(ech.key, /^-----BEGIN ECH KEYS-----/);
-          EOF
+          cp "$GITHUB_WORKSPACE"/tests/*.test.node.ts .
+          "$node_path" --experimental-strip-types --test ./*.test.node.ts
       - uses: actions/upload-artifact@v7
         if: github.ref_type == 'tag'
         with:
