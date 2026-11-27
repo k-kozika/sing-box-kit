@@ -39,6 +39,7 @@
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
+    "@actions/github": "^9.0.0",
     "@types/bun": "latest",
     "json-schema-to-typescript": "^16.0.0",
     "typescript": "^7.0.2",

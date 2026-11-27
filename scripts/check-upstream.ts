@@ -1,113 +1,137 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import type { context, getOctokit } from "@actions/github";
+import {
+  execFileSync,
+  spawnSync,
+  type SpawnSyncOptionsWithStringEncoding,
+} from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { $ } from "bun";
 
 const image = "ghcr.io/sagernet/sing-box:latest";
 const label = "compatibility";
+const maxCommentLength = 65_536;
 const snapshot = "schema/sing-box.json";
-const repository = process.env.GITHUB_REPOSITORY;
-if (!repository) throw new Error("GITHUB_REPOSITORY is required");
+const captureOutput = {
+  encoding: "utf8",
+  maxBuffer: Infinity,
+  stdio: ["ignore", "pipe", "pipe"],
+} satisfies SpawnSyncOptionsWithStringEncoding;
 
-async function githubPages<T>(endpoint: string): Promise<T[]> {
-  const pages = (await $`gh api --paginate --slurp ${endpoint}`.quiet().json()) as T[][];
-  return pages.flat();
-}
+function diffComment(diff: string): string {
+  if (!diff) return "The upstream schema matches the checked-in snapshot.";
 
-function diffComments(diff: string): string[] {
-  if (!diff) return ["The upstream schema matches the checked-in snapshot."];
-
-  // Leave room for the heading and fence in each GitHub comment. Prefer whole lines.
-  const parts = diff.match(/[\s\S]{1,50000}(?:\n|$)|[\s\S]{1,50000}/gu) ?? [];
-  return parts.map((part, index) => {
-    const longestRun = (part.match(/`{3,}/g) ?? []).reduce(
-      (max, run) => Math.max(max, run.length),
-      2,
-    );
-    const fence = "`".repeat(longestRun + 1);
-    const code = part.endsWith("\n") ? part : `${part}\n`;
-    return `Schema diff (${index + 1}/${parts.length})\n\n${fence}diff\n${code}${fence}`;
-  });
-}
-
-await $`docker pull ${image}`;
-const imageId = (await $`docker image inspect --format '{{.Id}}' ${image}`.quiet().text()).trim();
-const version = (
-  await $`docker run --rm --network none ${imageId} version --name`.quiet().text()
-).trim();
-if (!version || /[\r\n]/.test(version)) throw new Error("Expected a single upstream version name");
-
-const pinned = (await Bun.file("schema/version.json").json()) as { version?: unknown };
-if (typeof pinned?.version !== "string" || !pinned.version) {
-  throw new Error("schema/version.json must contain a version");
-}
-if (version === pinned.version) {
-  console.log(`sing-box ${version} matches schema/version.json`);
-  process.exit(0);
-}
-
-const directory = await mkdtemp(join(tmpdir(), "sing-box-upstream-"));
-try {
-  const schema = await $`docker run --rm --network none ${imageId} schema`.quiet().text();
-  const parsed: unknown = JSON.parse(schema);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Expected the upstream schema to be a JSON object");
-  }
-
-  const upstreamPath = join(directory, "sing-box.json");
-  await Bun.write(upstreamPath, schema);
-  const diff =
-    await $`diff -u --label ${snapshot} --label upstream/sing-box.json ${snapshot} ${upstreamPath}`
-      .quiet()
-      .nothrow();
-  if (diff.exitCode > 1) throw new Error(diff.stderr.toString());
-  const bodies = diffComments(diff.stdout.toString());
-
-  const api = `repos/${repository}`;
-  const openIssues = (
-    await githubPages<{ number: number; title: string; pull_request?: unknown }>(
-      `${api}/issues?state=open&labels=${label}&per_page=100`,
-    )
-  ).filter((issue) => !issue.pull_request);
-  const title = `[upstream] updated to ${version}`;
-  const currentIssue = openIssues.find((issue) => issue.title === title);
-  const bodyPath = join(directory, "body.md");
-  let issue = currentIssue?.number;
-  if (issue === undefined) {
-    const labels = await githubPages<{ name: string }>(`${api}/labels?per_page=100`);
-    if (!labels.some(({ name }) => name.toLowerCase() === label)) {
-      await $`gh label create ${label} --repo ${repository}`;
-    }
-    await Bun.write(
-      bodyPath,
-      `\`${image}\` reports sing-box \`${version}\`. The checked-in schema is for \`${pinned.version}\`.\n\nThe schema diff is posted below.`,
-    );
-    const url = (
-      await $`gh issue create --repo ${repository} --title ${title} --label ${label} --body-file ${bodyPath}`
-        .quiet()
-        .text()
-    ).trim();
-    issue = Number(new URL(url).pathname.split("/").at(-1));
-    if (!Number.isSafeInteger(issue) || issue < 1) throw new Error(`Unexpected issue URL ${url}`);
-    console.log(url);
-  }
-
-  const posted = new Set(
-    currentIssue
-      ? (await githubPages<{ body: string }>(`${api}/issues/${issue}/comments?per_page=100`)).map(
-          ({ body }) => body.trimEnd(),
-        )
-      : [],
+  const longestRun = (diff.match(/`{3,}/g) ?? []).reduce(
+    (max, run) => Math.max(max, run.length),
+    2,
   );
-  for (const body of bodies) {
-    if (posted.has(body)) continue;
-    await Bun.write(bodyPath, body);
-    await $`gh issue comment ${issue} --repo ${repository} --body-file ${bodyPath}`;
+  const fence = "`".repeat(longestRun + 1);
+  const code = diff.endsWith("\n") ? diff : `${diff}\n`;
+  return `Schema diff\n\n${fence}diff\n${code}${fence}`;
+}
+
+export async function checkUpstream(
+  github: ReturnType<typeof getOctokit>,
+  repository: typeof context.repo,
+): Promise<void> {
+  execFileSync("docker", ["pull", image], { stdio: "inherit" });
+  const imageId = execFileSync(
+    "docker",
+    ["image", "inspect", "--format", "{{.Id}}", image],
+    captureOutput,
+  ).trim();
+  const runImage = ["run", "--rm", "--network", "none", imageId];
+  const version = execFileSync("docker", [...runImage, "version", "--name"], captureOutput).trim();
+  if (!version || /[\r\n]/.test(version))
+    throw new Error("Expected a single upstream version name");
+
+  const pinned = JSON.parse(await readFile("schema/version.json", "utf8")) as { version?: unknown };
+  if (typeof pinned?.version !== "string" || !pinned.version) {
+    throw new Error("schema/version.json must contain a version");
+  }
+  if (version === pinned.version) {
+    console.log(`sing-box ${version} matches schema/version.json`);
+    return;
+  }
+
+  const directory = await mkdtemp(join(tmpdir(), "sing-box-upstream-"));
+  let comment: string;
+  try {
+    const schema = execFileSync("docker", [...runImage, "schema"], captureOutput);
+    const parsed: unknown = JSON.parse(schema);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Expected the upstream schema to be a JSON object");
+    }
+
+    const upstreamPath = join(directory, "sing-box.json");
+    await writeFile(upstreamPath, schema);
+    const diff = spawnSync(
+      "diff",
+      ["-u", "--label", snapshot, "--label", "upstream/sing-box.json", snapshot, upstreamPath],
+      captureOutput,
+    );
+    if (diff.error) throw diff.error;
+    if (diff.status !== 0 && diff.status !== 1) {
+      throw new Error(diff.stderr.trim() || `diff failed (${diff.signal ?? diff.status})`);
+    }
+    comment = diffComment(diff.stdout);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+
+  const fitsInComment = comment.length <= maxCommentLength;
+  const diffPosted = "The schema diff is posted below.";
+  const diffOmitted = "The schema diff is too long to post as a GitHub comment.";
+  const diffStatus = fitsInComment ? diffPosted : diffOmitted;
+
+  const issues = github.rest.issues;
+  const openIssues = (
+    await github.paginate(issues.listForRepo, {
+      ...repository,
+      state: "open",
+      labels: label,
+      per_page: 100,
+    })
+  ).filter((issue) => !issue.pull_request);
+  const title = `Check compatibility with sing-box ${version}`;
+  const currentIssue = openIssues.find((issue) => issue.title === title);
+  let issueNumber = currentIssue?.number;
+  if (issueNumber === undefined) {
+    const body = `\`${image}\` reports sing-box \`${version}\`. The checked-in schema is for \`${pinned.version}\`.\n\n${diffStatus}`;
+    const { data: created } = await issues.create({ ...repository, title, body, labels: [label] });
+    issueNumber = created.number;
+    if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {
+      throw new Error("Expected a valid issue number");
+    }
+    console.log(created.html_url);
+  } else if (currentIssue?.body) {
+    const previousStatus = fitsInComment ? diffOmitted : diffPosted;
+    const body = currentIssue.body.replace(previousStatus, diffStatus);
+    if (body !== currentIssue.body) {
+      await issues.update({ ...repository, issue_number: issueNumber, body });
+    }
+  }
+
+  if (fitsInComment) {
+    const posted = currentIssue
+      ? await github.paginate(issues.listComments, {
+          ...repository,
+          issue_number: issueNumber,
+          per_page: 100,
+        })
+      : [];
+    if (!posted.some(({ body }) => body?.trimEnd() === comment)) {
+      await issues.createComment({ ...repository, issue_number: issueNumber, body: comment });
+    }
   }
 
   for (const previous of openIssues) {
-    if (previous.number !== issue) await $`gh issue close ${previous.number} --repo ${repository}`;
+    if (previous.number === issueNumber) continue;
+    await issues.update({
+      ...repository,
+      issue_number: previous.number,
+      state: "closed",
+      state_reason: "completed",
+    });
   }
-} finally {
-  await rm(directory, { recursive: true, force: true });
 }
