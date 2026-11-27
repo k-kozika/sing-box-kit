@@ -27,5 +27,5 @@ The [package entry point](../../index.ts) exports resource builders, rule builde
 ## Where to check a change
 
 - [`tests/types.ts`](../../tests/types.ts) covers accepted and rejected TypeScript calls through the public API. Run `vp check` to check those cases.
-- [`tests/compile.test.ts`](../../tests/compile.test.ts) and [`tests/schema-coverage.test.ts`](../../tests/schema-coverage.test.ts) cover emitted JSON, reference resolution, rules, and validation errors. [`tests/factories.test.ts`](../../tests/factories.test.ts) compares public factories and branches with the pinned schema. Run them with `bun test`.
-- [`tests/sing-box-check.ts`](../../tests/sing-box-check.ts) runs the pinned sing-box binary against representative compiled configurations. The [CI workflow](../../.github/workflows/ci.yml) also checks generated files and smoke-tests the packed library on Node.js.
+- [`tests/compile.test.ts`](../../tests/compile.test.ts) and [`tests/schema-coverage.test.ts`](../../tests/schema-coverage.test.ts) cover emitted JSON, reference resolution, rules, and validation errors. [`tests/factories.test.ts`](../../tests/factories.test.ts) compares public factories and branches with the pinned schema. Run the suite with `vp test` on Node.js or `bun run --bun vp test --pool=threads` on Bun.
+- [`tests/sing-box-check.ts`](../../tests/sing-box-check.ts) runs the pinned sing-box binary against representative compiled configurations. The [CI workflow](../../.github/workflows/ci.yml) also checks generated files and runs the test suite on both runtimes.

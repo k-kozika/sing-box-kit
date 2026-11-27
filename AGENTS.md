@@ -10,7 +10,8 @@ The upstream schema snapshot and its version and revision live in `schema/`. Fol
 
 - `vp install --frozen-lockfile` installs dependencies from the Bun lockfile.
 - `vp check` checks formatting, lint, and types. Apply formatting with `vp fmt`.
-- `bun test` runs the test suite. Run a focused suite with `bun test tests/compile.test.ts`.
+- `vp test` runs the test suite on Node.js. Run a focused suite with `vp test tests/compile.test.ts`.
+- `bun run --bun vp test --pool=threads` runs the same suite on Bun.
 - `bun run build` uses Vite+ to emit the ESM bundle and type declarations in `dist/`.
 - To try the README example locally, import from `./index` in `config.ts` and run `bun config.ts`.
 
@@ -20,7 +21,7 @@ Use strict TypeScript with two-space indentation, double quotes, semicolons, and
 
 ## Testing
 
-Use `bun:test` in `tests/*.test.ts` with names that describe the behavior under test. Exercise public behavior through `index.ts` and add compile-time API cases to `tests/types.ts`. For schema or compilation changes, run `bun tests/sing-box-check.ts` with the binary pinned in `schema/version.json` on `PATH` or via `SING_BOX`. CI also verifies generated files and smoke-tests the packed library on Node.js.
+Use `vite-plus/test` in `tests/*.test.ts` with names that describe the behavior under test. Exercise public behavior through `index.ts` and add compile-time API cases to `tests/types.ts`. For schema or compilation changes, run `bun tests/sing-box-check.ts` with the binary pinned in `schema/version.json` on `PATH` or via `SING_BOX`. CI verifies generated files and runs the test suite on Node.js and Bun.
 
 ## Commits and Pull Requests
 

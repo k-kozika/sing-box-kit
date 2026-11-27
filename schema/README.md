@@ -13,7 +13,7 @@ vp install --frozen-lockfile
 bun run schema:generate
 git diff --exit-code -- src/generated
 vp check
-bun test
+vp test
 ```
 
 Type generation reads the local snapshot and works offline after dependency installation. CI checks both generated type files and independently compares the public factory names and branches to the pinned schema. SBKit's input types use the same schema projections as the runtime builders. Run `bun tests/sing-box-check.ts` with the pinned binary on `PATH`, or set `SING_BOX` to its path, to check the representative configurations. When updating the supported sing-box version, update the schema snapshot, `version.json`, generated types, and affected test expectations together.

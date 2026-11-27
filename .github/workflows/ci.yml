@@ -19,7 +19,7 @@ jobs:
           persist-credentials: false
       - uses: voidzero-dev/setup-vp@v1.22.0
         with:
-          node-version: "22.13.0"
+          node-version: "22.23.3"
           run-install: false
       - name: Check the release tag
         if: github.ref_type == 'tag'
@@ -33,7 +33,10 @@ jobs:
       - run: bun run schema:generate
       - run: git diff --exit-code -- src/generated
       - run: vp check
-      - run: bun test
+      - name: Test on Node.js
+        run: vp test
+      - name: Test on Bun
+        run: bun run --bun vp test --pool=threads
       - name: Check representative configurations with pinned sing-box
         run: |
           version=$(bun -p 'require("./schema/version.json").version')
@@ -45,16 +48,9 @@ jobs:
           tar -xzf "$RUNNER_TEMP/${asset}.tar.gz" -C "$RUNNER_TEMP/sing-box-bin" \
             --strip-components=1 --wildcards '*/sing-box'
           SING_BOX="$RUNNER_TEMP/sing-box-bin/sing-box" bun tests/sing-box-check.ts
-      - name: Test the packed package on Node.js
-        run: |
-          vp pm pack --out "$RUNNER_TEMP/sing-box-kit.tgz"
-          node_path=$(node -p 'process.execPath')
-          bun_path=$(bun -p 'process.execPath')
-          consumer_dir=$(mktemp -d)
-          cd "$consumer_dir"
-          "$bun_path" add "$RUNNER_TEMP/sing-box-kit.tgz"
-          cp "$GITHUB_WORKSPACE"/tests/*.test.node.ts .
-          "$node_path" --experimental-strip-types --test ./*.test.node.ts
+      - name: Pack the npm release
+        if: github.ref_type == 'tag'
+        run: vp pm pack --out "$RUNNER_TEMP/sing-box-kit.tgz"
       - uses: actions/upload-artifact@v7
         if: github.ref_type == 'tag'
         with:

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { rejects } from "node:assert/strict";
+import { describe, expect, test } from "vite-plus/test";
 import { compile, inbound, outbound, proxyProfile, route, service, user } from "../index";
 
 const connect = { host: "edge.example", port: 443 };

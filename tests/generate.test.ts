@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
 import { rejects } from "node:assert/strict";
 import { createECDH, createHmac, createPrivateKey, X509Certificate } from "node:crypto";
 import { createSecureContext } from "node:tls";
+import { expect, test } from "vite-plus/test";
 import { generate } from "../index";
 
 test("generates UUID v4 and random bytes in each encoding", () => {
@@ -81,8 +81,8 @@ test("generates matching ECH config and key PEM blocks", async () => {
   const pair = await generate.echKeyPair("public.example");
   const configs = Buffer.from(pair.config.split("\n").slice(1, -2).join(""), "base64");
   const keys = Buffer.from(pair.key.split("\n").slice(1, -2).join(""), "base64");
-  expect(pair.config).toStartWith("-----BEGIN ECH CONFIGS-----");
-  expect(pair.key).toStartWith("-----BEGIN ECH KEYS-----");
+  expect(pair.config).toMatch(/^-----BEGIN ECH CONFIGS-----/);
+  expect(pair.key).toMatch(/^-----BEGIN ECH KEYS-----/);
   expect(configs.readUInt16BE(0)).toBe(configs.length - 2);
   expect(configs.readUInt16BE(2)).toBe(0xfe0d);
   expect(configs.readUInt16BE(4)).toBe(configs.length - 6);
