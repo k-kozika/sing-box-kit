@@ -236,7 +236,7 @@ for (const transport of [
     );
   }
 }
-const reality = proxyProfile.vless({
+const reality = await proxyProfile.vless({
   ...shared,
   tls: {
     mode: "reality",

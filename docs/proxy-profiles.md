@@ -42,7 +42,7 @@ VMess, VLESS, and Trojan default to TCP. Select `http`, `ws`, `grpc`, `httpupgra
 
 For regular TLS, the client uses the public host as the verification name by default. Set `tls.serverName` when it differs. Set `tls.alpn` in the profile to send the same list to both ends. V2Ray QUIC requires regular TLS.
 
-For VLESS REALITY, use `tls: { mode: "reality", serverName, handshake: { host, port }, keyPair: { privateKey, publicKey }, shortId }`. To accept multiple short IDs, use `shortIds` and pass `shortId` in the client options.
+For VLESS REALITY, pass `tls: { mode: "reality", serverName, handshake: { host, port }, keyPair: { privateKey, publicKey }, shortId }` and use `await proxyProfile.vless(options)` to validate the key pair with Web Crypto before building either resource. To accept multiple short IDs, use `shortIds` and pass `shortId` in the client options.
 
 ## Protocol versions and shared keys
 

@@ -39,3 +39,4 @@ export type {
 } from "./src/settings";
 export { user } from "./src/user";
 export type { User, UserCredentials } from "./src/user";
+export { generate } from "./src/generate";
