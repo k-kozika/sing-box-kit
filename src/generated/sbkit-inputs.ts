@@ -387,7 +387,7 @@ export type RouteActionInput =
       override_address?: string;
       override_port?: number;
       network_strategy?: "default" | "fallback" | "hybrid";
-      fallback_delay?: number;
+      fallback_delay?: Duration;
       udp_disable_domain_unmapping?: boolean;
       udp_connect?: boolean;
       udp_timeout?: Duration;
@@ -402,7 +402,7 @@ export type RouteActionInput =
       override_address?: string;
       override_port?: number;
       network_strategy?: "default" | "fallback" | "hybrid";
-      fallback_delay?: number;
+      fallback_delay?: Duration;
       udp_disable_domain_unmapping?: boolean;
       udp_connect?: boolean;
       udp_timeout?: Duration;
@@ -418,7 +418,7 @@ export type RouteActionInput =
       override_address?: string;
       override_port?: number;
       network_strategy?: "default" | "fallback" | "hybrid";
-      fallback_delay?: number;
+      fallback_delay?: Duration;
       udp_disable_domain_unmapping?: boolean;
       udp_connect?: boolean;
       udp_timeout?: Duration;

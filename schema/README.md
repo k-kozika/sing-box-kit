@@ -4,7 +4,7 @@ The [pinned schema](sing-box.json) is the verbatim output of `sing-box schema`. 
 
 [`version.json`](version.json) records the output of `sing-box version --name` and the `Revision` reported by `sing-box version` for the same binary.
 
-The upstream sing-box project is Copyright (C) 2022 by nekohasekai and publishes under GPL-3.0-or-later with additional naming terms. See the [sing-box v1.14.4 license notice](https://github.com/SagerNet/sing-box/blob/v1.14.4/README.md#license) and [release](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4).
+The upstream sing-box project is Copyright (C) 2022 by nekohasekai and publishes under GPL-3.0-or-later with additional naming terms. See the [sing-box license notice](https://github.com/SagerNet/sing-box/blob/v1.14.6/README.md#license) and [release](https://github.com/SagerNet/sing-box/releases/tag/v1.14.6).
 
 ## Regenerate the types
 

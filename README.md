@@ -1,6 +1,6 @@
 # sing-box-kit
 
-Build and validate sing-box v1.14.4 configurations in TypeScript.
+Build and validate sing-box configurations in TypeScript.
 
 ## Quick start
 

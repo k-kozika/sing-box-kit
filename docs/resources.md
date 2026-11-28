@@ -1,6 +1,6 @@
 # Resource factories and registration
 
-Choose a factory from the table and register its finished value in the corresponding `compile()` list. The pinned sing-box v1.14.4 schema contains 77 kinds with a `type` discriminator. SBKit also exports a standalone `httpClient()` factory.
+Choose a factory from the table and register its finished value in the corresponding `compile()` list. The pinned sing-box schema contains 77 kinds with a `type` discriminator. SBKit also exports a standalone `httpClient()` factory.
 
 | Package export        | Factory methods                                                                                                                                                                                        | Register in             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
